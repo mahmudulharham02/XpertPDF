@@ -25,14 +25,41 @@ export function ScanTool() {
       const reader = new FileReader();
       reader.onload = (e) => {
         if (e.target?.result && typeof e.target.result === 'string') {
-          const newId = Math.random().toString(36).substring(7);
-          setImages(prev => [...prev, {
-            id: newId,
-            original: e.target!.result as string,
-            filtered: e.target!.result as string,
-            filter: 'none'
-          }]);
-          setActiveImageId(newId);
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            const MAX_DIMENSION = 1500;
+            if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+              if (width > height) {
+                height = (height / width) * MAX_DIMENSION;
+                width = MAX_DIMENSION;
+              } else {
+                width = (width / height) * MAX_DIMENSION;
+                height = MAX_DIMENSION;
+              }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+               ctx.fillStyle = '#ffffff';
+               ctx.fillRect(0, 0, canvas.width, canvas.height);
+               ctx.drawImage(img, 0, 0, width, height);
+               const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+               const newId = Math.random().toString(36).substring(7);
+               setImages(prev => [...prev, {
+                 id: newId,
+                 original: dataUrl,
+                 filtered: dataUrl,
+                 filter: 'none'
+               }]);
+               setActiveImageId(newId);
+            }
+          };
+          img.src = e.target.result as string;
         }
       };
       reader.readAsDataURL(file);
@@ -65,8 +92,10 @@ export function ScanTool() {
         ctx.filter = 'contrast(120%) brightness(1.1) saturate(1.2)';
       }
 
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      const newFiltered = canvas.toDataURL('image/jpeg', 0.9);
+      const newFiltered = canvas.toDataURL('image/jpeg', 0.8);
 
       setImages(prev => prev.map(item => 
         item.id === imgObj.id 
