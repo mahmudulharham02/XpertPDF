@@ -31,9 +31,11 @@ function PdfPage({
   const [isDrawing, setIsDrawing] = useState(false);
 
   useEffect(() => {
+    let isCancelled = false;
     let renderTask: any;
     if (pdfDoc && canvasRef.current) {
       pdfDoc.getPage(pageNumber).then((page: any) => {
+        if (isCancelled) return;
         const viewport = page.getViewport({ scale });
         const canvas = canvasRef.current;
         const ctx = canvas?.getContext('2d');
@@ -49,15 +51,18 @@ function PdfPage({
 
         renderTask = page.render({ canvasContext: ctx, viewport });
         renderTask.promise.then(() => {
-          setRendered(true);
+          if (!isCancelled) setRendered(true);
         }).catch((e: any) => {
           if(e.name !== 'RenderingCancelledException') {
             console.error('Render error', e);
           }
         });
+      }).catch((e: any) => {
+        console.error('Get page error', e);
       });
     }
     return () => {
+      isCancelled = true;
       if (renderTask) renderTask.cancel();
     }
   }, [pdfDoc, pageNumber, scale]);
