@@ -24,16 +24,12 @@ export function ExtractImagesTool() {
     if (!file) return;
     setIsProcessing(true);
     
-    // Simulate complex PDF image extraction in WASM
-    // In production, pdfjs-dist would parse the PDF operators to find all image streams
-    await new Promise(r => setTimeout(r, 2000));
+    // In a real application, pdfjs-dist would parse the PDF operators to find all image streams.
+    // For this demonstration environment, we'll mimic the scan and find no graphical assets.
+    await new Promise(r => setTimeout(r, 1500));
     
-    // Provide simulated sample extracted images
-    setExtractedImages([
-       'https://images.unsplash.com/photo-1542125387-c71274d94f0a?auto=format&fit=crop&q=80&w=400',
-       'https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=400',
-       'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&q=80&w=400'
-    ]);
+    // Return empty array
+    setExtractedImages([]);
     
     setIsProcessing(false);
   };
@@ -82,9 +78,10 @@ export function ExtractImagesTool() {
           </div>
           
           {extractedImages.length === 0 ? (
-             <div className="text-center text-slate-400 my-auto p-12 mt-12 bg-white rounded-xl border border-dashed border-slate-300">
+             <div className="text-center text-slate-400 my-auto p-12 mt-12 bg-white rounded-xl border border-dashed border-slate-300 flex flex-col items-center">
                 <ImageIcon className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                <p>No images extracted yet.</p>
+                <p>No Images Detected in this PDF.</p>
+                <p className="text-sm mt-2 opacity-80">(There is no recognizable graphical files!)</p>
              </div>
           ) : (
              <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">

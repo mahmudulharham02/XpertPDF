@@ -1,16 +1,21 @@
-import React from 'react';
-import { Palette, Type, Moon, Sun, Droplet } from 'lucide-react';
+import React, { useState } from 'react';
+import { Palette, Type, Moon, Sun, Droplet, Globe } from 'lucide-react';
+import { t } from '../../lib/i18n';
 
 export function SettingsTool({ 
   currentTheme, 
   setTheme, 
   currentFont, 
-  setFont 
+  setFont,
+  language,
+  setLanguage
 }: { 
   currentTheme: string, 
   setTheme: (t: string) => void,
   currentFont: string,
-  setFont: (f: string) => void
+  setFont: (f: string) => void,
+  language: string,
+  setLanguage: (l: string) => void
 }) {
 
   const themes = [
@@ -27,6 +32,23 @@ export function SettingsTool({
     { id: 'courier', name: 'Courier New' }
   ];
 
+  const languages = [
+    { id: 'binary', name: '01010010 01100101 01100001 (Binary)' },
+    { id: 'en', name: 'English' },
+    { id: 'fr', name: 'French' },
+    { id: 'pt', name: 'Portuguese' },
+    { id: 'bn', name: 'Bangla' },
+    { id: 'hi', name: 'Hindi' },
+    { id: 'ar', name: 'Arabic' },
+    { id: 'es', name: 'Spanish' },
+    { id: 'zh', name: 'Chinese' },
+    { id: 'zh-TW', name: 'Chinese Traditional' },
+    { id: 'ja', name: 'Japanese' },
+    { id: 'ko', name: 'Korean' },
+    { id: 'vi', name: 'Vietnamese' },
+    { id: 'ru', name: 'Russian' }
+  ];
+
   return (
     <div className="flex-1 flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col p-6 lg:p-10">
@@ -34,7 +56,7 @@ export function SettingsTool({
         <div className="mb-8">
            <h2 className="text-2xl font-bold text-slate-800 mb-2 flex items-center gap-2">
              <Palette className="w-6 h-6 text-indigo-600" />
-             Appearance Settings
+             {t(language, 'settings')}
            </h2>
            <p className="text-slate-500">Customize the look and feel of your workspace.</p>
         </div>
@@ -44,7 +66,7 @@ export function SettingsTool({
           {/* Theme Selection */}
           <section>
             <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
-              Theme Mode
+              {t(language, 'themes')}
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                {themes.map(theme => {
@@ -109,9 +131,31 @@ export function SettingsTool({
             </div>
           </section>
 
+          {/* Language Selection */}
+          <section>
+            <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+              <Globe className="w-5 h-5" />
+              {t(language, 'languageOptions')}
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-4">
+               {languages.map(lang => (
+                 <button
+                   key={lang.id}
+                   onClick={() => setLanguage(lang.id)}
+                   className={`flex items-center justify-between p-3 rounded-xl border-2 transition-all ${
+                       language === lang.id ? 'border-indigo-600 bg-indigo-50 text-indigo-900' : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                    }`}
+                 >
+                   <span className="text-sm font-medium">{lang.name}</span>
+                 </button>
+               ))}
+            </div>
+          </section>
+
         </div>
 
       </div>
     </div>
   );
 }
+

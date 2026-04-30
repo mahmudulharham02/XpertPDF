@@ -54,8 +54,10 @@ export function SignTool() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Get correct coordinates considering canvas offset
     const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
     let clientX, clientY;
 
     if ('touches' in e) {
@@ -66,8 +68,8 @@ export function SignTool() {
       clientY = e.clientY;
     }
 
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
+    const x = (clientX - rect.left) * scaleX;
+    const y = (clientY - rect.top) * scaleY;
 
     ctx.lineTo(x, y);
     ctx.stroke();
