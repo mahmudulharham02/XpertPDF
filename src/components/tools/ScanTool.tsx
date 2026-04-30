@@ -13,7 +13,8 @@ export function ScanTool() {
   const [images, setImages] = useState<ScannedImage[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeImageId, setActiveImageId] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const handleCapture = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -37,10 +38,9 @@ export function ScanTool() {
       reader.readAsDataURL(file);
     });
     
-    // Reset file input
-    if (fileInputRef.current) {
-       fileInputRef.current.value = '';
-    }
+    // Reset file inputs
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+    if (galleryInputRef.current) galleryInputRef.current.value = '';
   };
 
   const applyFilter = (imgObj: ScannedImage, filterType: ScannedImage['filter']) => {
@@ -139,23 +139,40 @@ export function ScanTool() {
           <h3 className="text-white font-medium mb-4 flex items-center justify-between">
              <span className="flex items-center gap-2"><Camera className="w-5 h-5 text-indigo-400" /> Document Scanner</span>
              
-             {/* Hidden File Input for Native Camera / Gallery Access */}
+             {/* Hidden File Input for Native Camera */}
              <input 
                type="file" 
                accept="image/*" 
                capture="environment" 
-               ref={fileInputRef} 
+               ref={cameraInputRef} 
+               onChange={handleCapture}
+               className="hidden" 
+             />
+             
+             {/* Hidden File Input for Gallery */}
+             <input 
+               type="file" 
+               accept="image/*" 
+               ref={galleryInputRef} 
                onChange={handleCapture}
                className="hidden" 
                multiple
              />
              
-             <button 
-               onClick={() => fileInputRef.current?.click()}
-               className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
-             >
-               <Camera className="w-4 h-4" /> Capture New
-             </button>
+             <div className="flex gap-2">
+                 <button 
+                   onClick={() => galleryInputRef.current?.click()}
+                   className="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
+                 >
+                   <ImageIcon className="w-4 h-4" /> Add
+                 </button>
+                 <button 
+                   onClick={() => cameraInputRef.current?.click()}
+                   className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
+                 >
+                   <Camera className="w-4 h-4" /> Capture New
+                 </button>
+             </div>
           </h3>
           
           <div className="flex-1 relative rounded-xl overflow-hidden bg-black flex items-center justify-center border border-slate-700">
@@ -180,7 +197,7 @@ export function ScanTool() {
              ) : (
                 <div className="text-center">
                    <button 
-                     onClick={() => fileInputRef.current?.click()}
+                     onClick={() => cameraInputRef.current?.click()}
                      className="w-16 h-16 bg-slate-800 hover:bg-slate-700 rounded-full flex items-center justify-center text-slate-300 transition-transform hover:scale-105 mx-auto mb-4 border-2 border-slate-600 border-dashed"
                    >
                      <Plus className="w-8 h-8" />
