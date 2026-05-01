@@ -9,7 +9,8 @@ import {
   X,
   BookOpen,
   Settings,
-  ArrowLeft
+  ArrowLeft,
+  FileImage
 } from 'lucide-react';
 import { MergeTool } from './components/tools/MergeTool';
 import { SignTool } from './components/tools/SignTool';
@@ -17,9 +18,10 @@ import { ScanTool } from './components/tools/ScanTool';
 import { ExtractImagesTool } from './components/tools/ExtractImagesTool';
 import { ViewerTool } from './components/tools/ViewerTool';
 import { SettingsTool } from './components/tools/SettingsTool';
+import { PdfToImageTool } from './components/tools/PdfToImageTool';
 import { t } from './lib/i18n';
 
-export type ToolType = 'dashboard' | 'viewer' | 'extract-images' | 'merge' | 'sign' | 'scan' | 'settings';
+export type ToolType = 'dashboard' | 'viewer' | 'extract-images' | 'merge' | 'sign' | 'scan' | 'settings' | 'pdf-to-image';
 
 export default function App() {
   const [activeTool, setActiveTool] = useState<ToolType>('dashboard');
@@ -73,6 +75,7 @@ export default function App() {
     { id: 'dashboard', label: t(language, 'dashboard'), icon: LayoutDashboard },
     { id: 'viewer', label: t(language, 'viewer'), icon: BookOpen },
     { id: 'extract-images', label: t(language, 'extractImages'), icon: Images },
+    { id: 'pdf-to-image', label: t(language, 'pdfToImage'), icon: FileImage },
     { id: 'merge', label: t(language, 'merge'), icon: Merge },
     { id: 'sign', label: t(language, 'sign'), icon: PenTool },
     { id: 'scan', label: t(language, 'scan'), icon: Scan },
@@ -168,6 +171,7 @@ export default function App() {
             {activeTool === 'dashboard' && <Dashboard setActiveTool={changeTool} language={language} />}
             {activeTool === 'viewer' && <ViewerTool />}
             {activeTool === 'extract-images' && <ExtractImagesTool />}
+            {activeTool === 'pdf-to-image' && <PdfToImageTool />}
             {activeTool === 'merge' && <MergeTool />}
             {activeTool === 'sign' && <SignTool />}
             {activeTool === 'scan' && <ScanTool />}
@@ -183,6 +187,7 @@ function Dashboard({ setActiveTool, language }: { setActiveTool: (t: ToolType) =
   const tools = [
     { id: 'viewer', title: t(language, 'viewer'), icon: BookOpen, color: 'text-sky-600', bg: 'bg-sky-100' },
     { id: 'extract-images', title: t(language, 'extractImages'), icon: Images, color: 'text-purple-600', bg: 'bg-purple-100' },
+    { id: 'pdf-to-image', title: t(language, 'pdfToImage'), icon: FileImage, color: 'text-emerald-600', bg: 'bg-emerald-100' },
     { id: 'merge', title: t(language, 'merge'), icon: Merge, color: 'text-amber-600', bg: 'bg-amber-100' },
     { id: 'sign', title: t(language, 'sign'), icon: PenTool, color: 'text-rose-600', bg: 'bg-rose-100' },
     { id: 'scan', title: t(language, 'scan'), icon: Scan, color: 'text-indigo-600', bg: 'bg-indigo-100' },

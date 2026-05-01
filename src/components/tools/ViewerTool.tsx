@@ -15,6 +15,7 @@ function PdfPage({
   pdfDoc, 
   scale, 
   drawMode, 
+  drawTool,
   strokeSize,
   onSaveDrawing 
 }: { 
@@ -22,6 +23,7 @@ function PdfPage({
   pdfDoc: any; 
   scale: number; 
   drawMode: boolean;
+  drawTool: 'pencil' | 'marker' | 'highlighter';
   strokeSize: number;
   onSaveDrawing: (pageNum: number, canvas: HTMLCanvasElement) => void;
 }) {
@@ -44,7 +46,8 @@ function PdfPage({
         canvas.height = viewport.height;
         canvas.width = viewport.width;
 
-        if (drawCanvasRef.current) {
+        // Only resize drawCanvas if it hasn't been set up yet to avoid losing drawings
+        if (drawCanvasRef.current && drawCanvasRef.current.width !== viewport.width) {
           drawCanvasRef.current.width = viewport.width;
           drawCanvasRef.current.height = viewport.height;
         }
@@ -93,7 +96,20 @@ function PdfPage({
 
     ctx.lineWidth = strokeSize;
     ctx.lineCap = 'round';
-    ctx.strokeStyle = '#ef4444'; // Red marker
+    ctx.lineJoin = 'round';
+    
+    if (drawTool === 'pencil') {
+      ctx.strokeStyle = '#1e293b'; // slate-800
+      ctx.globalCompositeOperation = 'source-over';
+    } else if (drawTool === 'marker') {
+      ctx.strokeStyle = '#ef4444'; // red-500
+      ctx.globalCompositeOperation = 'source-over';
+    } else if (drawTool === 'highlighter') {
+      ctx.strokeStyle = 'rgba(250, 204, 21, 0.05)'; // yellow-400 transparent
+      ctx.globalCompositeOperation = 'multiply';
+      // Adjust stroke size visually for highlighter
+      ctx.lineWidth = strokeSize * 2;
+    }
 
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
@@ -111,10 +127,18 @@ function PdfPage({
     const x = (clientX - rect.left) * scaleX;
     const y = (clientY - rect.top) * scaleY;
 
-    ctx.lineTo(x, y);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x, y);
+    if (drawTool === 'highlighter') {
+      // Highlighter draws smoothly but overlaps can get dark. Using small opacity arc.
+      ctx.beginPath();
+      ctx.arc(x, y, ctx.lineWidth / 2, 0, Math.PI * 2, false);
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.1)';
+      ctx.fill();
+    } else {
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+    }
   };
 
   return (
@@ -146,11 +170,14 @@ export function ViewerTool() {
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   
-  const [scale, setScale] = useState<number>(window.innerWidth < 768 ? 1.0 : 1.5);
+  const [pdfScale] = useState<number>(window.innerWidth < 768 ? 1.0 : 1.5);
+  const [cssScale, setCssScale] = useState<number>(1.0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [drawMode, setDrawMode] = useState(false);
+  const [drawTool, setDrawTool] = useState<'pencil' | 'marker' | 'highlighter'>('pencil');
   const [strokeSize, setStrokeSize] = useState(3);
   const [showHeader, setShowHeader] = useState(true);
+  const [hasEdited, setHasEdited] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const drawingsRef = useRef<Map<number, string>>(new Map());
@@ -161,12 +188,14 @@ export function ViewerTool() {
       setFile(f);
       setFileName(f.name);
       setIsLoading(true);
+      setHasEdited(false);
       drawingsRef.current.clear();
       
       try {
         const arrayBuffer = await f.arrayBuffer();
         const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
         setPdfDoc(pdf);
+        setCssScale(1.0);
       } catch (error) {
         console.error('Error loading PDF:', error);
         alert('Failed to load PDF.');
@@ -186,10 +215,11 @@ export function ViewerTool() {
     setPdfDoc(null);
     setFile(null);
     setFileName('');
+    setHasEdited(false);
   };
 
-  const zoomIn = () => setScale(p => Math.min(p + 0.25, 3.0));
-  const zoomOut = () => setScale(p => Math.max(p - 0.25, 0.5));
+  const zoomIn = () => setCssScale(p => Math.min(p + 0.25, 3.0));
+  const zoomOut = () => setCssScale(p => Math.max(p - 0.25, 0.5));
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -211,6 +241,7 @@ export function ViewerTool() {
 
   const handleSaveDrawing = (pageNum: number, canvas: HTMLCanvasElement) => {
     drawingsRef.current.set(pageNum, canvas.toDataURL('image/png'));
+    setHasEdited(true);
   };
 
   const handleSaveEditedPdf = async () => {
@@ -263,7 +294,7 @@ export function ViewerTool() {
               <BookOpen className="w-8 h-8" />
             </div>
             <h2 className="text-2xl font-bold text-slate-800">PDF Viewer</h2>
-            <p className="text-slate-500 mt-2 max-w-md mb-8">View and read your PDF documents securely in WebToon style.</p>
+            <p className="text-slate-500 mt-2 max-w-md mb-8">View and read your PDF documents securely.</p>
             
             <div 
               {...getRootProps()} 
@@ -307,30 +338,45 @@ export function ViewerTool() {
                    </button>
                    
                    {drawMode && (
-                     <select 
-                       value={strokeSize} 
-                       onChange={e => setStrokeSize(parseInt(e.target.value))}
-                       className="bg-slate-700 text-white border-none rounded-lg text-sm px-2 py-1 outline-none"
-                     >
-                       <option value={1}>Fine</option>
-                       <option value={3}>Medium</option>
-                       <option value={6}>Thick</option>
-                       <option value={10}>Marker</option>
-                     </select>
+                     <div className="flex items-center gap-2 bg-slate-700 rounded-lg px-2 py-1 ml-1">
+                       <select 
+                         value={drawTool} 
+                         onChange={e => setDrawTool(e.target.value as any)}
+                         className="bg-transparent text-white border-none text-sm outline-none cursor-pointer [&>option]:bg-slate-800 [&>option]:text-white"
+                       >
+                         <option value="pencil">Pencil</option>
+                         <option value="marker">Marker</option>
+                         <option value="highlighter">Highlighter</option>
+                       </select>
+                       <div className="w-px h-4 bg-slate-600 mx-1 gap-1"></div>
+                       <select 
+                         value={strokeSize} 
+                         onChange={e => setStrokeSize(parseInt(e.target.value))}
+                         className="bg-transparent text-white border-none text-sm outline-none cursor-pointer [&>option]:bg-slate-800 [&>option]:text-white"
+                       >
+                         <option value={1}>Fine</option>
+                         <option value={3}>Medium</option>
+                         <option value={6}>Thick</option>
+                         <option value={10}>Jumbo</option>
+                       </select>
+                     </div>
                    )}
 
-                   <button 
-                     onClick={handleSaveEditedPdf}
-                     className="p-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
-                   >
-                     <Download className="w-4 h-4" /> <span className="hidden sm:inline">Save</span>
-                   </button>
+                   {hasEdited && (
+                     <button 
+                       onClick={handleSaveEditedPdf}
+                       className="p-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 ml-1"
+                     >
+                       <Download className="w-4 h-4" /> <span className="hidden sm:inline">Save</span>
+                     </button>
+                   )}
 
                    {/* Zoom Actions */}
                    <div className="flex items-center bg-slate-700 rounded-lg px-2 py-1 ml-2">
                      <button onClick={zoomOut} className="p-1 hover:bg-slate-600 rounded text-slate-300 hover:text-white" title="Zoom Out">
                        <ZoomOut className="w-4 h-4" />
                      </button>
+                     <span className="text-xs text-slate-300 font-mono w-10 text-center">{Math.round(cssScale * 100)}%</span>
                      <button onClick={zoomIn} className="p-1 hover:bg-slate-600 rounded text-slate-300 hover:text-white" title="Zoom In">
                        <ZoomIn className="w-4 h-4" />
                      </button>
@@ -349,21 +395,24 @@ export function ViewerTool() {
 
             {/* Scrollable Container (WebToon Style) */}
             <div 
-               className="flex-1 overflow-auto bg-slate-100 p-2 sm:p-4 touch-pan-x touch-pan-y"
+               className="flex-1 overflow-auto bg-slate-100 p-2 sm:p-4"
                onClick={() => setShowHeader(h => !h)}
             >
-               {pdfDoc && Array.from({ length: pdfDoc.numPages }).map((_, i) => (
-                 <div key={i} onClick={(e) => e.stopPropagation()}>
-                   <PdfPage 
-                     pageNumber={i + 1} 
-                     pdfDoc={pdfDoc} 
-                     scale={scale} 
-                     drawMode={drawMode}
-                     strokeSize={strokeSize}
-                     onSaveDrawing={handleSaveDrawing}
-                   />
-                 </div>
-               ))}
+               <div style={{ transform: `scale(${cssScale})`, transformOrigin: 'top center', transition: 'transform 0.1s ease-out' }}>
+                 {pdfDoc && Array.from({ length: pdfDoc.numPages }).map((_, i) => (
+                   <div key={i} onClick={(e) => e.stopPropagation()}>
+                     <PdfPage 
+                       pageNumber={i + 1} 
+                       pdfDoc={pdfDoc} 
+                       scale={pdfScale} 
+                       drawMode={drawMode}
+                       drawTool={drawTool}
+                       strokeSize={strokeSize}
+                       onSaveDrawing={handleSaveDrawing}
+                     />
+                   </div>
+                 ))}
+               </div>
                
                {isLoading && (
                  <div className="fixed inset-0 bg-white/50 backdrop-blur-sm z-50 flex items-center justify-center">

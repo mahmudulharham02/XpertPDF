@@ -116,45 +116,54 @@ export function ScanTool() {
     });
   };
 
-  const generatePDF = () => {
+  const generatePDF = async () => {
     if (images.length === 0) return;
     setIsGenerating(true);
 
-    setTimeout(() => {
-      try {
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        const pageWidth = pdf.internal.pageSize.getWidth();
-        const pageHeight = pdf.internal.pageSize.getHeight();
+    try {
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
 
-        images.forEach((imgObj, index) => {
-          if (index > 0) pdf.addPage();
-          
-          // To ensure correct proportion
-          const imgProps = pdf.getImageProperties(imgObj.filtered);
-          const ratio = imgProps.width / imgProps.height;
-          
-          let renderWidth = pageWidth;
-          let renderHeight = renderWidth / ratio;
-          
-          if (renderHeight > pageHeight) {
-            renderHeight = pageHeight;
-            renderWidth = renderHeight * ratio;
-          }
-          
-          const x = (pageWidth - renderWidth) / 2;
-          const y = (pageHeight - renderHeight) / 2;
-          
-          pdf.addImage(imgObj.filtered, 'JPEG', x, y, renderWidth, renderHeight);
+      for (let index = 0; index < images.length; index++) {
+        const imgObj = images[index];
+        if (index > 0) pdf.addPage();
+        
+        await new Promise<void>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+             const ratio = img.width / img.height;
+             
+             let renderWidth = pageWidth;
+             let renderHeight = renderWidth / ratio;
+             
+             if (renderHeight > pageHeight) {
+               renderHeight = pageHeight;
+               renderWidth = renderHeight * ratio;
+             }
+             
+             const x = (pageWidth - renderWidth) / 2;
+             const y = (pageHeight - renderHeight) / 2;
+             
+             try {
+                pdf.addImage(imgObj.filtered, 'JPEG', x, y, renderWidth, renderHeight);
+                resolve();
+             } catch (err) {
+                reject(err);
+             }
+          };
+          img.onerror = () => reject(new Error("Failed to load image for PDF generation"));
+          img.src = imgObj.filtered;
         });
-
-        pdf.save('Scanned_Document.pdf');
-      } catch (e) {
-        console.error("Error generating PDF", e);
-        alert("Failed to generate PDF.");
-      } finally {
-        setIsGenerating(false);
       }
-    }, 100);
+
+      pdf.save('Scanned_Document.pdf');
+    } catch (e) {
+      console.error("Error generating PDF", e);
+      alert("Failed to generate PDF. See console for details.");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const activeImage = images.find(img => img.id === activeImageId);
