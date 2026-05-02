@@ -276,33 +276,33 @@ export function SignTool() {
   };
 
   return (
-    <div className="flex-1 flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 h-full">
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col items-center flex-1">
+    <div className="flex-1 flex flex-col pt-4 animate-in fade-in slide-in-from-bottom-4 duration-300 h-full">
+      <div className="liquid-panel rounded-[24px] overflow-hidden flex flex-col items-center flex-1 shadow-lg shadow-black/5">
         
         {stage === 'UPLOAD' && (
           <div className="w-full p-10 flex flex-col items-center justify-center flex-1">
             <div className="text-center mb-8">
-               <div className="w-12 h-12 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-4">
-                 <PenTool className="w-6 h-6" />
+               <div className="w-20 h-20 liquid-panel rounded-[24px] text-rose-500 flex items-center justify-center mx-auto mb-6 shadow-lg shadow-rose-500/10">
+                 <PenTool className="w-10 h-10" />
                </div>
-               <h2 className="text-2xl font-bold text-slate-800">Sign Documents & Images</h2>
-               <p className="text-slate-500 mt-2 max-w-md">Add digital signatures to your PDF and Image files.</p>
+               <h2 className="text-2xl font-bold text-slate-800 dark:text-white">Sign Documents & Images</h2>
+               <p className="text-slate-500 dark:text-slate-400 mt-2 max-w-md font-medium">Add digital signatures to your PDF and Image files.</p>
             </div>
 
             <div 
               {...getRootProps()} 
-              className={`w-full max-w-xl border-2 border-dashed rounded-xl p-12 flex flex-col items-center justify-center text-center cursor-pointer transition-colors ${
-                isDragActive ? 'border-rose-500 bg-rose-50' : 'border-slate-300 hover:border-slate-400 bg-slate-50'
+              className={`w-full max-w-xl mx-auto liquid-panel rounded-[24px] p-12 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-300 pointer-events-auto ${
+                isDragActive ? 'scale-[1.02] bg-rose-50/50 dark:bg-rose-900/20 border-rose-400' : 'hover:bg-white/40 dark:hover:bg-white/5 border-dashed border-2 border-rose-200 dark:border-rose-800/50'
               }`}
             >
               <input {...getInputProps()} />
-              <UploadCloud className="w-12 h-12 mb-4 text-slate-400" />
-              <p className="text-lg font-medium text-slate-700">Upload document or image</p>
-              <p className="text-sm text-slate-500 mt-2">Supports PDF, PNG, JPG, WEBP</p>
+              <UploadCloud className={`w-12 h-12 mb-4 transition-colors ${isDragActive ? 'text-rose-500' : 'text-slate-400 dark:text-slate-500'}`} />
+              <p className="text-lg font-bold text-slate-700 dark:text-slate-200">Upload document or image</p>
+              <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-2">Supports PDF, PNG, JPG, WEBP</p>
             </div>
             
             {isProcessing && (
-              <div className="mt-8 flex items-center gap-2 text-rose-600 font-medium">
+              <div className="mt-8 flex items-center gap-2 text-rose-600 font-bold">
                 <Loader2 className="w-5 h-5 animate-spin"/> Processing...
               </div>
             )}
@@ -312,29 +312,29 @@ export function SignTool() {
         {stage === 'DRAW' && (
           <div className="w-full max-w-xl p-10 flex flex-col animate-in slide-in-from-bottom-4 flex-1">
             <div className="flex items-center gap-4 mb-8">
-              <button onClick={() => setStage('UPLOAD')} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500">
+              <button onClick={() => setStage('UPLOAD')} className="p-2 liquid-btn-secondary rounded-xl text-slate-600 dark:text-slate-300">
                 <ArrowLeft className="w-5 h-5" />
               </button>
               <div>
-                <h3 className="text-xl font-bold text-slate-800">Draw your signature</h3>
-                <p className="text-sm text-slate-500">You can position and scale it in the next step.</p>
+                <h3 className="text-xl font-bold text-slate-800 dark:text-white">Draw your signature</h3>
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">You can position and scale it in the next step.</p>
               </div>
             </div>
             
-            <div className="flex justify-between items-center mb-3 px-1">
-               <span className="text-sm font-medium text-slate-400">Sign below</span>
-               <button onClick={clearCanvas} className="text-sm text-slate-500 hover:text-rose-600 flex items-center gap-1 font-medium bg-slate-100 hover:bg-rose-50 px-3 py-1 rounded-md transition-colors">
+            <div className="flex justify-between items-center mb-3 px-2">
+               <span className="text-sm font-bold text-slate-400 dark:text-slate-500">Sign below</span>
+               <button onClick={clearCanvas} className="text-sm text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 flex items-center gap-1 font-bold liquid-btn-secondary px-3 py-1.5 rounded-lg transition-colors">
                  <Eraser className="w-4 h-4" /> Clear
                </button>
             </div>
             
-            <div className="border-2 border-slate-200 rounded-xl bg-slate-50 shadow-inner mb-8 relative overflow-hidden" style={{ touchAction: 'none' }}>
-              <div className="absolute top-1/2 left-0 w-full h-px border-b-2 border-dashed border-slate-200 -translate-y-1/2 pointer-events-none opacity-50"></div>
+            <div className="liquid-panel border-2 border-white/20 dark:border-black/20 rounded-[24px] shadow-inner mb-8 relative overflow-hidden" style={{ touchAction: 'none' }}>
+              <div className="absolute top-1/2 left-0 w-full h-px border-b-2 border-dashed border-slate-300 dark:border-slate-600 -translate-y-1/2 pointer-events-none opacity-50"></div>
               <canvas
                 ref={drawCanvasRef}
                 width={550}
                 height={250}
-                className="w-full h-[250px] cursor-crosshair relative z-10 block"
+                className="w-full h-[250px] cursor-crosshair relative z-10 block mix-blend-multiply dark:mix-blend-normal bg-white/50 dark:bg-black/20"
                 onMouseDown={startDrawing}
                 onMouseUp={stopDrawing}
                 onMouseOut={stopDrawing}
@@ -347,7 +347,8 @@ export function SignTool() {
             
             <button 
               onClick={finishDrawing} 
-              className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-medium shadow-md transition-all text-lg"
+              className="w-full py-4 liquid-btn text-white rounded-[16px] font-bold text-lg"
+              style={{ background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(2, 6, 23, 1))' }}
             >
               Apply to Document
             </button>
@@ -356,28 +357,29 @@ export function SignTool() {
 
         {stage === 'POSITION' && (
           <div className="w-full flex-1 flex flex-col overflow-hidden relative">
-            <div className="bg-slate-50 border-b border-slate-200 px-6 py-4 flex items-center justify-between shrink-0 z-20 relative shadow-sm">
+            <div className="bg-white/40 dark:bg-black/20 border-b border-black/5 dark:border-white/10 px-6 py-4 flex items-center justify-between shrink-0 z-20 relative">
               <div className="flex items-center gap-4">
-                <button onClick={() => setStage('DRAW')} className="p-2 hover:bg-slate-200 rounded-lg text-slate-600 transition-colors">
+                <button onClick={() => setStage('DRAW')} className="p-2 liquid-btn-secondary rounded-xl text-slate-600 dark:text-slate-300 transition-colors">
                   <ArrowLeft className="w-5 h-5" />
                 </button>
-                <h3 className="font-semibold text-slate-800">Position Signature</h3>
+                <h3 className="font-bold text-lg text-slate-800 dark:text-white">Position Signature</h3>
               </div>
               
               <button 
                 onClick={saveFile} 
                 disabled={isProcessing}
-                className="px-6 py-2 bg-rose-600 hover:bg-rose-500 text-white shadow-md rounded-lg font-medium transition-all flex items-center gap-2 disabled:opacity-50 active:scale-95"
+                className="px-6 py-2.5 liquid-btn text-white rounded-[12px] font-bold transition-all flex items-center gap-2 disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg, rgba(225, 29, 72, 0.9), rgba(190, 18, 60, 1))', boxShadow: '0 4px 12px rgba(190, 18, 60, 0.3), inset 0 1px 2px rgba(255, 255, 255, 0.4)' }}
               >
-                {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4"/>}
+                {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5"/>}
                 Save
               </button>
             </div>
 
-            <div className="flex-1 overflow-auto bg-slate-200 relative p-4 lg:p-8 flex items-start justify-center">
+            <div className="flex-1 overflow-auto bg-slate-100/50 dark:bg-black/40 relative p-4 lg:p-8 flex items-start justify-center shadow-inner pt-6">
                <div 
                  ref={previewFrameRef}
-                 className="relative shadow-xl bg-white select-none overflow-hidden" 
+                 className="relative shadow-2xl rounded-sm overflow-hidden ring-1 ring-black/5" 
                  style={{ maxWidth: '100%', display: 'inline-block' }}
                >
                  <img 
@@ -400,6 +402,8 @@ export function SignTool() {
                      padding: '4px',
                      backgroundColor: 'transparent',
                      zIndex: 10,
+                     width: 'max-content',
+                     height: 'max-content'
                    }}
                    onPointerDown={handlePointerDown}
                    onPointerMove={handlePointerMove}
@@ -420,11 +424,11 @@ export function SignTool() {
                </div>
             </div>
 
-            <div className="bg-white border-t border-slate-200 px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-6 z-20 shrink-0">
-               <div>
-                 <div className="flex justify-between text-sm font-medium mb-2">
-                   <span className="text-slate-700">Size</span>
-                   <span className="text-slate-500">{Math.round(sigScale * 100)}%</span>
+            <div className="liquid-panel border-t border-black/5 dark:border-white/10 px-6 py-6 grid grid-cols-1 md:grid-cols-2 gap-8 z-20 shrink-0">
+               <div className="bg-white/40 dark:bg-black/20 p-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/10">
+                 <div className="flex justify-between text-sm font-bold mb-4">
+                   <span className="text-slate-800 dark:text-slate-200">Size</span>
+                   <span className="text-slate-500 dark:text-slate-400 bg-white/50 dark:bg-black/40 px-2 py-0.5 rounded-full">{Math.round(sigScale * 100)}%</span>
                  </div>
                  <input 
                    type="range" 
@@ -433,13 +437,13 @@ export function SignTool() {
                    step="0.05" 
                    value={sigScale} 
                    onChange={(e) => setSigScale(parseFloat(e.target.value))}
-                   className="w-full accent-rose-600"
+                   className="w-full accent-rose-500 h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
                  />
                </div>
-               <div>
-                 <div className="flex justify-between text-sm font-medium mb-2">
-                   <span className="text-slate-700">Rotation</span>
-                   <span className="text-slate-500">{sigRotation}°</span>
+               <div className="bg-white/40 dark:bg-black/20 p-4 rounded-2xl shadow-sm border border-black/5 dark:border-white/10">
+                 <div className="flex justify-between text-sm font-bold mb-4">
+                   <span className="text-slate-800 dark:text-slate-200">Rotation</span>
+                   <span className="text-slate-500 dark:text-slate-400 bg-white/50 dark:bg-black/40 px-2 py-0.5 rounded-full">{sigRotation}°</span>
                  </div>
                  <input 
                    type="range" 
@@ -448,7 +452,7 @@ export function SignTool() {
                    step="1" 
                    value={sigRotation} 
                    onChange={(e) => setSigRotation(parseFloat(e.target.value))}
-                   className="w-full accent-rose-600"
+                   className="w-full accent-rose-500 h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
                  />
                </div>
             </div>

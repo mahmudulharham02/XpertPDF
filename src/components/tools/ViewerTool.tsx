@@ -6,6 +6,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument } from 'pdf-lib';
 import { downloadBlob } from '../../lib/utils';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -170,8 +171,7 @@ export function ViewerTool() {
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   
-  const [pdfScale] = useState<number>(window.innerWidth < 768 ? 1.0 : 1.5);
-  const [cssScale, setCssScale] = useState<number>(1.0);
+  const [pdfScale, setPdfScale] = useState<number>(window.innerWidth < 768 ? 1.5 : 2.0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [drawMode, setDrawMode] = useState(false);
   const [drawTool, setDrawTool] = useState<'pencil' | 'marker' | 'highlighter'>('pencil');
@@ -195,7 +195,6 @@ export function ViewerTool() {
         const arrayBuffer = await f.arrayBuffer();
         const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
         setPdfDoc(pdf);
-        setCssScale(1.0);
       } catch (error) {
         console.error('Error loading PDF:', error);
         alert('Failed to load PDF.');
@@ -218,8 +217,7 @@ export function ViewerTool() {
     setHasEdited(false);
   };
 
-  const zoomIn = () => setCssScale(p => Math.min(p + 0.25, 3.0));
-  const zoomOut = () => setCssScale(p => Math.max(p - 0.25, 0.5));
+  const [currentScale, setCurrentScale] = useState(1);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -282,30 +280,32 @@ export function ViewerTool() {
   };
 
   return (
-    <div className="flex-1 flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500 min-h-full">
+    <div className="flex-1 flex flex-col pt-4 animate-in fade-in slide-in-from-bottom-4 duration-300 min-h-full">
       <div 
         ref={containerRef}
-        className={`bg-white shadow-sm border border-slate-200 flex flex-col flex-1 ${isFullscreen ? 'rounded-none' : 'rounded-xl'}`}
+        className={`bg-transparent flex flex-col flex-1 ${isFullscreen ? 'rounded-none' : 'rounded-[24px]'}`}
       >
         
         {!pdfDoc && !isLoading ? (
           <div className="p-10 flex flex-col items-center justify-center min-h-[600px] text-center">
-            <div className="w-16 h-16 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center mb-6">
-              <BookOpen className="w-8 h-8" />
+            <div className="w-20 h-20 liquid-panel rounded-[24px] text-indigo-500 flex items-center justify-center mb-6 shadow-lg shadow-indigo-500/10">
+              <BookOpen className="w-10 h-10" />
             </div>
-            <h2 className="text-2xl font-bold text-slate-800">PDF Viewer</h2>
-            <p className="text-slate-500 mt-2 max-w-md mb-8">View and read your PDF documents securely.</p>
+            <h2 className="text-2xl font-semibold text-slate-800 dark:text-white">PDF Viewer</h2>
+            <p className="text-slate-500 dark:text-slate-400 mt-2 max-w-md mb-8">View and read your PDF documents securely.</p>
             
             <div 
               {...getRootProps()} 
-              className={`w-full max-w-xl border-2 border-dashed rounded-xl p-12 flex flex-col items-center justify-center text-center cursor-pointer transition-colors ${
-                isDragActive ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:border-slate-400 bg-slate-50'
+              className={`w-full max-w-xl liquid-panel rounded-[24px] p-12 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-300 ${
+                isDragActive ? 'scale-[1.02] bg-indigo-50/50 dark:bg-indigo-900/20 border-indigo-400' : 'hover:bg-white/40 dark:hover:bg-white/5 border-dashed border-2 border-indigo-200 dark:border-indigo-800'
               }`}
             >
               <input {...getInputProps()} />
-              <UploadCloud className="w-12 h-12 mb-4 text-slate-400" />
-              <p className="text-lg font-medium text-slate-700">Open a PDF file</p>
-              <p className="text-sm text-slate-500 mt-2">Drag and drop or click to browse</p>
+              <div className="w-16 h-16 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center mb-4 transition-transform group-hover:scale-110">
+                 <UploadCloud className="w-8 h-8 text-indigo-500 dark:text-indigo-400" />
+              </div>
+              <p className="text-lg font-semibold text-slate-700 dark:text-slate-200">Open a PDF file</p>
+              <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-2">Drag and drop or click to browse</p>
             </div>
           </div>
         ) : isLoading && !pdfDoc ? (
@@ -321,38 +321,38 @@ export function ViewerTool() {
                }}
           >
             {/* Horizontal Header Panel */}
-            <div className={`absolute top-0 left-0 right-0 z-30 transition-transform duration-300 ${showHeader ? 'translate-y-0' : '-translate-y-full'}`}>
-              <div className="bg-slate-800 text-white flex flex-wrap gap-3 items-center justify-between px-4 py-3 shadow-lg">
+            <div className={`absolute top-4 left-4 right-4 z-30 transition-all duration-300 ${showHeader ? 'translate-y-0 opacity-100' : '-translate-y-16 opacity-0 pointer-events-none'}`}>
+              <div className="liquid-panel rounded-2xl flex flex-wrap gap-3 items-center justify-between px-5 py-3">
                 <div className="flex items-center gap-3">
-                  <BookOpen className="w-5 h-5 text-blue-400" />
-                  <span className="font-medium truncate max-w-32 md:max-w-xs">{fileName}</span>
+                  <BookOpen className="w-5 h-5 text-indigo-500" />
+                  <span className="font-semibold text-slate-800 dark:text-white truncate max-w-32 md:max-w-xs">{fileName}</span>
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-2">
                    {/* Draw Mode Actions */}
                    <button 
                      onClick={() => setDrawMode(!drawMode)}
-                     className={`p-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 ${drawMode ? 'bg-rose-500 text-white' : 'bg-slate-700 text-slate-300 hover:text-white hover:bg-slate-600'}`}
+                     className={`p-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 ${drawMode ? 'bg-rose-500 text-white shadow-[0_4px_12px_rgba(244,63,94,0.3)]' : 'liquid-btn-secondary text-slate-700 dark:text-slate-300'}`}
                    >
                      <PenTool className="w-4 h-4" /> <span className="hidden sm:inline">Draw</span>
                    </button>
                    
                    {drawMode && (
-                     <div className="flex items-center gap-2 bg-slate-700 rounded-lg px-2 py-1 ml-1">
+                     <div className="flex items-center gap-2 liquid-btn-secondary rounded-xl px-2 py-1 ml-1">
                        <select 
                          value={drawTool} 
                          onChange={e => setDrawTool(e.target.value as any)}
-                         className="bg-transparent text-white border-none text-sm outline-none cursor-pointer [&>option]:bg-slate-800 [&>option]:text-white"
+                         className="bg-transparent text-slate-700 dark:text-white border-none text-sm font-medium outline-none cursor-pointer [&>option]:bg-white dark:[&>option]:bg-slate-800"
                        >
                          <option value="pencil">Pencil</option>
                          <option value="marker">Marker</option>
                          <option value="highlighter">Highlighter</option>
                        </select>
-                       <div className="w-px h-4 bg-slate-600 mx-1 gap-1"></div>
+                       <div className="w-px h-5 bg-black/10 dark:bg-white/10 mx-1 gap-1"></div>
                        <select 
                          value={strokeSize} 
                          onChange={e => setStrokeSize(parseInt(e.target.value))}
-                         className="bg-transparent text-white border-none text-sm outline-none cursor-pointer [&>option]:bg-slate-800 [&>option]:text-white"
+                         className="bg-transparent text-slate-700 dark:text-white border-none text-sm font-medium outline-none cursor-pointer [&>option]:bg-white dark:[&>option]:bg-slate-800"
                        >
                          <option value={1}>Fine</option>
                          <option value={3}>Medium</option>
@@ -365,29 +365,18 @@ export function ViewerTool() {
                    {hasEdited && (
                      <button 
                        onClick={handleSaveEditedPdf}
-                       className="p-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 ml-1"
+                       className="p-2 liquid-btn rounded-xl text-sm font-medium flex items-center gap-1.5 ml-1"
                      >
                        <Download className="w-4 h-4" /> <span className="hidden sm:inline">Save</span>
                      </button>
                    )}
 
-                   {/* Zoom Actions */}
-                   <div className="flex items-center bg-slate-700 rounded-lg px-2 py-1 ml-2">
-                     <button onClick={zoomOut} className="p-1 hover:bg-slate-600 rounded text-slate-300 hover:text-white" title="Zoom Out">
-                       <ZoomOut className="w-4 h-4" />
-                     </button>
-                     <span className="text-xs text-slate-300 font-mono w-10 text-center">{Math.round(cssScale * 100)}%</span>
-                     <button onClick={zoomIn} className="p-1 hover:bg-slate-600 rounded text-slate-300 hover:text-white" title="Zoom In">
-                       <ZoomIn className="w-4 h-4" />
-                     </button>
-                   </div>
-
-                   <button onClick={toggleFullscreen} className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white rounded-lg transition-colors ml-2">
+                   <button onClick={toggleFullscreen} className="p-2 liquid-btn-secondary text-slate-700 dark:text-slate-300 rounded-xl ml-2">
                      {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
                    </button>
 
-                   <button onClick={closeViewer} className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors ml-2">
-                     <X className="w-4 h-4" />
+                   <button onClick={closeViewer} className="p-2 text-slate-500 dark:text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-xl transition-colors ml-1">
+                     <X className="w-5 h-5" />
                    </button>
                 </div>
               </div>
@@ -395,27 +384,57 @@ export function ViewerTool() {
 
             {/* Scrollable Container (WebToon Style) */}
             <div 
-               className="flex-1 overflow-auto bg-slate-100 p-2 sm:p-4"
+               className="flex-1 overflow-y-auto overflow-x-hidden relative bg-slate-100 dark:bg-black/40 pt-4"
                onClick={() => setShowHeader(h => !h)}
             >
-               <div style={{ transform: `scale(${cssScale})`, transformOrigin: 'top center', transition: 'transform 0.1s ease-out' }}>
-                 {pdfDoc && Array.from({ length: pdfDoc.numPages }).map((_, i) => (
-                   <div key={i} onClick={(e) => e.stopPropagation()}>
-                     <PdfPage 
-                       pageNumber={i + 1} 
-                       pdfDoc={pdfDoc} 
-                       scale={pdfScale} 
-                       drawMode={drawMode}
-                       drawTool={drawTool}
-                       strokeSize={strokeSize}
-                       onSaveDrawing={handleSaveDrawing}
-                     />
-                   </div>
-                 ))}
-               </div>
+               {pdfDoc && Array.from({ length: pdfDoc.numPages }).map((_, i) => (
+                 <div key={i} onClick={(e) => e.stopPropagation()} className="mb-6 mx-auto w-full max-w-5xl px-2 lg:px-8 flex justify-center relative shadow-sm">
+                    <TransformWrapper
+                       initialScale={1}
+                       minScale={1}
+                       maxScale={5.0}
+                       centerOnInit={true}
+                       panning={{ disabled: drawMode }}
+                       doubleClick={{ disabled: drawMode }}
+                       wheel={{ wheelDisabled: true }}
+                       pinch={{ disabled: drawMode }}
+                    >
+                       {({ state }) => (
+                         <TransformComponent 
+                            wrapperClass={`!w-auto !h-auto ${state.scale <= 1.01 ? 'touch-pan-y' : 'touch-none cursor-grab active:cursor-grabbing !overflow-hidden z-10 relative'}`} 
+                            contentClass="w-auto h-auto transition-transform origin-center"
+                         >
+                            <PdfPage 
+                              pageNumber={i + 1} 
+                              pdfDoc={pdfDoc} 
+                              scale={pdfScale} 
+                              drawMode={drawMode}
+                              drawTool={drawTool}
+                              strokeSize={strokeSize}
+                              onSaveDrawing={handleSaveDrawing}
+                            />
+                         </TransformComponent>
+                       )}
+                    </TransformWrapper>
+                 </div>
+               ))}
+
+               {pdfDoc && (
+                 <div className={`fixed bottom-6 right-6 z-40 flex items-center bg-white/40 dark:bg-black/40 rounded-2xl px-2 py-1 shadow-lg ring-1 ring-black/5 dark:ring-white/10 transition-all duration-300 ${showHeader ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`} onClick={e => e.stopPropagation()}>
+                    <button onClick={() => setPdfScale(s => Math.max(0.5, s - 0.25))} className="p-3 hover:bg-black/5 dark:hover:bg-white/10 rounded-xl text-slate-700 dark:text-slate-300 transition-colors" title="Zoom Out">
+                      <ZoomOut className="w-5 h-5" />
+                    </button>
+                    <div className="text-sm font-bold font-mono text-slate-700 dark:text-slate-300 w-16 text-center">
+                      {Math.round(pdfScale * 100)}%
+                    </div>
+                    <button onClick={() => setPdfScale(s => Math.min(5.0, s + 0.25))} className="p-3 hover:bg-black/5 dark:hover:bg-white/10 rounded-xl text-slate-700 dark:text-slate-300 transition-colors" title="Zoom In">
+                      <ZoomIn className="w-5 h-5" />
+                    </button>
+                 </div>
+               )}
                
                {isLoading && (
-                 <div className="fixed inset-0 bg-white/50 backdrop-blur-sm z-50 flex items-center justify-center">
+                 <div className="fixed inset-0 bg-white/50 dark:bg-black/50 z-50 flex items-center justify-center">
                     <Loader2 className="w-10 h-10 animate-spin text-blue-600" />
                  </div>
                )}
