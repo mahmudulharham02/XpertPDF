@@ -18,7 +18,7 @@ export function SettingsTool({
   setLanguage: (l: string) => void
 }) {
 
-  const [activeFolder, setActiveFolder] = useState<string>('themes');
+  const [activeFolder, setActiveFolder] = useState<string>('');
 
   const toggleFolder = (folder: string) => {
     setActiveFolder(prev => prev === folder ? '' : folder);

@@ -10,7 +10,9 @@ import {
   BookOpen,
   Settings,
   ArrowLeft,
-  FileImage
+  FileImage,
+  Scissors,
+  Lock
 } from 'lucide-react';
 import { MergeTool } from './components/tools/MergeTool';
 import { SignTool } from './components/tools/SignTool';
@@ -19,9 +21,11 @@ import { ExtractImagesTool } from './components/tools/ExtractImagesTool';
 import { ViewerTool } from './components/tools/ViewerTool';
 import { SettingsTool } from './components/tools/SettingsTool';
 import { PdfToImageTool } from './components/tools/PdfToImageTool';
+import { SplitTool } from './components/tools/SplitTool';
+import { EncryptTool } from './components/tools/EncryptTool';
 import { t } from './lib/i18n';
 
-export type ToolType = 'dashboard' | 'viewer' | 'extract-images' | 'merge' | 'sign' | 'scan' | 'settings' | 'pdf-to-image';
+export type ToolType = 'dashboard' | 'viewer' | 'extract-images' | 'merge' | 'sign' | 'scan' | 'settings' | 'pdf-to-image' | 'split' | 'encrypt';
 
 export default function App() {
   const [activeTool, setActiveTool] = useState<ToolType>('dashboard');
@@ -73,12 +77,6 @@ export default function App() {
 
   const navItems = [
     { id: 'dashboard', label: t(language, 'dashboard'), icon: LayoutDashboard },
-    { id: 'viewer', label: t(language, 'viewer'), icon: BookOpen },
-    { id: 'extract-images', label: t(language, 'extractImages'), icon: Images },
-    { id: 'pdf-to-image', label: t(language, 'pdfToImage'), icon: FileImage },
-    { id: 'merge', label: t(language, 'merge'), icon: Merge },
-    { id: 'sign', label: t(language, 'sign'), icon: PenTool },
-    { id: 'scan', label: t(language, 'scan'), icon: Scan },
     { id: 'settings', label: t(language, 'settings'), icon: Settings },
   ] as const;
 
@@ -109,7 +107,7 @@ export default function App() {
             <span className="text-xl font-bold tracking-tight text-slate-800 dark:text-white">Xpert<span className="text-indigo-500 dark:text-indigo-400">PDF</span></span>
           </div>
           <button 
-            className="md:hidden p-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors"
+            className="md:hidden p-3 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
             onClick={() => setIsSidebarOpen(false)}
           >
             <X className="w-5 h-5" />
@@ -149,14 +147,14 @@ export default function App() {
           {/* Header */}
           <header className="h-20 shrink-0 bg-white/30 dark:bg-black/20 border-b border-black/5 dark:border-white/10 flex items-center px-4 md:px-8 z-10 gap-4">
             <button 
-              className="md:hidden liquid-btn-secondary p-2 rounded-xl"
+              className="md:hidden liquid-btn-secondary p-3 rounded-xl"
               onClick={() => setIsSidebarOpen(true)}
             >
               <Menu className="w-5 h-5 text-slate-700 dark:text-slate-300" />
             </button>
             {activeTool !== 'dashboard' && (
               <button 
-                className="liquid-btn-secondary p-2 rounded-xl"
+                className="liquid-btn-secondary p-3 rounded-xl"
                 onClick={() => changeTool('dashboard')}
               >
                 <ArrowLeft className="w-5 h-5 text-slate-700 dark:text-slate-300" />
@@ -168,18 +166,25 @@ export default function App() {
           </header>
 
           {/* Dynamic Content */}
-          <div className="flex-1 overflow-auto relative p-4 md:p-8 custom-scrollbar">
-            <div className="max-w-5xl mx-auto min-h-full flex flex-col">
-              {activeTool === 'dashboard' && <Dashboard setActiveTool={changeTool} language={language} />}
-              {activeTool === 'viewer' && <ViewerTool />}
-              {activeTool === 'extract-images' && <ExtractImagesTool />}
-              {activeTool === 'pdf-to-image' && <PdfToImageTool />}
-              {activeTool === 'merge' && <MergeTool />}
-              {activeTool === 'sign' && <SignTool />}
-              {activeTool === 'scan' && <ScanTool />}
-              {activeTool === 'settings' && <SettingsTool currentTheme={theme} setTheme={handleSetTheme} currentFont={font} setFont={handleSetFont} language={language} setLanguage={handleSetLanguage} />}
+          {activeTool === 'viewer' ? (
+             <div className="flex-1 flex flex-col relative overflow-hidden bg-white dark:bg-slate-900 w-full h-full">
+                <ViewerTool />
+             </div>
+          ) : (
+            <div className="flex-1 overflow-auto relative p-4 md:p-8 custom-scrollbar">
+              <div className="max-w-5xl mx-auto min-h-full flex flex-col">
+                {activeTool === 'dashboard' && <Dashboard setActiveTool={changeTool} language={language} />}
+                {activeTool === 'extract-images' && <ExtractImagesTool />}
+                {activeTool === 'pdf-to-image' && <PdfToImageTool />}
+                {activeTool === 'merge' && <MergeTool />}
+                {activeTool === 'split' && <SplitTool />}
+                {activeTool === 'encrypt' && <EncryptTool />}
+                {activeTool === 'sign' && <SignTool />}
+                {activeTool === 'scan' && <ScanTool />}
+                {activeTool === 'settings' && <SettingsTool currentTheme={theme} setTheme={handleSetTheme} currentFont={font} setFont={handleSetFont} language={language} setLanguage={handleSetLanguage} />}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </main>
     </div>
@@ -192,6 +197,8 @@ function Dashboard({ setActiveTool, language }: { setActiveTool: (t: ToolType) =
     { id: 'extract-images', title: t(language, 'extractImages'), icon: Images, color: 'text-purple-600', bg: 'bg-purple-100' },
     { id: 'pdf-to-image', title: t(language, 'pdfToImage'), icon: FileImage, color: 'text-emerald-600', bg: 'bg-emerald-100' },
     { id: 'merge', title: t(language, 'merge'), icon: Merge, color: 'text-amber-600', bg: 'bg-amber-100' },
+    { id: 'split', title: 'Split PDF', icon: Scissors, color: 'text-fuchsia-600', bg: 'bg-fuchsia-100' },
+    { id: 'encrypt', title: 'Protect & Unlock', icon: Lock, color: 'text-teal-600', bg: 'bg-teal-100' },
     { id: 'sign', title: t(language, 'sign'), icon: PenTool, color: 'text-rose-600', bg: 'bg-rose-100' },
     { id: 'scan', title: t(language, 'scan'), icon: Scan, color: 'text-indigo-600', bg: 'bg-indigo-100' },
   ] as const;
