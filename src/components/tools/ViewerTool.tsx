@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { 
     UploadCloud, BookOpen, X, ZoomIn, ZoomOut, Loader2, Maximize, Minimize, 
-    Download, PenTool, Search, List, PanelLeftClose, PanelLeftOpen, LayoutGrid, LayoutTemplate, Moon, Sun, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Type
+    Download, PenTool, Search, List, PanelLeftClose, PanelLeftOpen, LayoutGrid, LayoutTemplate, Moon, Sun, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Type, Edit3, Wrench
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 // @ts-expect-error
@@ -10,6 +10,7 @@ import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { downloadBlob } from '../../lib/utils';
 import { useInView } from 'react-intersection-observer';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -31,7 +32,7 @@ function PdfPage({
   pdfDoc: any; 
   scale: number; 
   drawMode: boolean;
-  drawTool: 'pencil' | 'marker' | 'highlighter';
+  drawTool: 'pencil' | 'marker' | 'highlighter' | 'eraser';
   strokeSize: number;
   onSaveDrawing: (pageNum: number, canvas: HTMLCanvasElement) => void;
   darkMode: boolean;
@@ -70,15 +71,20 @@ function PdfPage({
         const ctx = canvas?.getContext('2d');
         if (!canvas || !ctx) return;
 
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
+        const outputScale = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(viewport.width * outputScale);
+        canvas.height = Math.floor(viewport.height * outputScale);
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
 
         if (drawCanvasRef.current && drawCanvasRef.current.width !== viewport.width) {
           drawCanvasRef.current.width = viewport.width;
           drawCanvasRef.current.height = viewport.height;
         }
 
-        renderTask = page.render({ canvasContext: ctx, viewport });
+        const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
+
+        renderTask = page.render({ canvasContext: ctx, viewport, transform } as any);
         renderTask.promise.then(() => {
           if (!isCancelled) setRendered(true);
         }).catch((e: any) => {
@@ -87,34 +93,78 @@ function PdfPage({
           }
         });
 
-        if (editTextMode) {
-          page.getTextContent().then((content: any) => {
-            if (isCancelled) return;
-            const items = content.items.filter((i: any) => 'str' in i && i.str.trim() !== '');
-            const mapped = items.map((item: any, idx: number) => {
-              const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
-              const fontHeight = Math.sqrt((tx[2] * tx[2]) + (tx[3] * tx[3]));
-              return {
-                id: idx,
-                originalItem: item,
-                text: item.str,
-                style: {
-                  left: `${tx[4]}px`,
-                  top: `${tx[5] - fontHeight}px`,
-                  fontSize: `${fontHeight}px`,
-                  position: 'absolute' as const,
-                  fontFamily: item.fontName || 'sans-serif',
-                  whiteSpace: 'pre' as const,
-                  transform: 'scaleY(1)',
-                  minWidth: `${item.width * scale}px`
+        // Always extract text for selection or editing
+        page.getTextContent().then((content: any) => {
+          if (isCancelled) return;
+          const items = content.items.filter((i: any) => 'str' in i);
+          
+          items.sort((a: any, b: any) => {
+             if (Math.abs(b.transform[5] - a.transform[5]) > 5) return b.transform[5] - a.transform[5];
+             return a.transform[4] - b.transform[4];
+          });
+
+          const blocks: any[] = [];
+          let currentBlock: any = null;
+
+          items.forEach((item: any, idx: number) => {
+             if (item.str.trim() === '') {
+               if (currentBlock) currentBlock.text += item.str;
+               return;
+             }
+             const y = item.transform[5];
+             const x = item.transform[4];
+             const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+             const fontHeight = Math.sqrt((tx[2] * tx[2]) + (tx[3] * tx[3]));
+             
+             if (!currentBlock) {
+                currentBlock = { id: idx, text: item.str, originalItems: [item], fontHeight, tx, width: item.width * scale };
+             } else {
+                const prevItem = currentBlock.originalItems[currentBlock.originalItems.length - 1];
+                const prevY = prevItem.transform[5];
+                const prevX = prevItem.transform[4];
+                const prevWidth = prevItem.width;
+
+                const sameLine = Math.abs(prevY - y) < 5;
+                const nextLine = !sameLine && (prevY - y) > 0 && (prevY - y) < (currentBlock.fontHeight / scale) * 2.5;
+                
+                if (sameLine) {
+                   const space = x - (prevX + prevWidth);
+                   if (space > 5) currentBlock.text += ' ';
+                   currentBlock.text += item.str;
+                   currentBlock.originalItems.push(item);
+                   currentBlock.width = Math.max(currentBlock.width, (x - currentBlock.originalItems[0].transform[4] + item.width) * scale);
+                } else if (nextLine) {
+                   currentBlock.text += '\n' + item.str;
+                   currentBlock.originalItems.push(item);
+                   currentBlock.width = Math.max(currentBlock.width, item.width * scale);
+                } else {
+                   blocks.push(currentBlock);
+                   currentBlock = { id: idx, text: item.str, originalItems: [item], fontHeight, tx, width: item.width * scale };
                 }
-              };
-            });
-            setTextItems(mapped);
-          }).catch(console.error);
-        } else {
-          setTextItems([]);
-        }
+             }
+          });
+          if (currentBlock) blocks.push(currentBlock);
+
+          const mapped = blocks.map((block: any) => {
+             return {
+                id: block.id,
+                originalItems: block.originalItems,
+                text: block.text,
+                style: {
+                   left: `${block.tx[4]}px`,
+                   top: `${block.tx[5] - block.fontHeight}px`,
+                   fontSize: `${block.fontHeight}px`,
+                   position: 'absolute' as const,
+                   fontFamily: block.originalItems[0].fontName || 'sans-serif',
+                   whiteSpace: 'pre-wrap' as const,
+                   lineHeight: 1.2,
+                   transform: 'scaleY(1)',
+                   minWidth: `${block.width}px`
+                }
+             };
+          });
+          setTextItems(mapped);
+        }).catch(console.error);
       }).catch((e: any) => {
         if (e.name !== 'RenderingCancelledException' && !e.message?.includes('Rendering cancelled')) {
           console.error('Get page error', e);
@@ -178,6 +228,9 @@ function PdfPage({
       ctx.strokeStyle = 'rgba(250, 204, 21, 0.05)'; 
       ctx.globalCompositeOperation = 'multiply';
       ctx.lineWidth = strokeSize * 2;
+    } else if (drawTool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.lineWidth = strokeSize * 2;
     }
 
     const rect = canvas.getBoundingClientRect();
@@ -224,10 +277,10 @@ function PdfPage({
            <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
         </div>
       )}
-      <canvas ref={canvasRef} className="w-full h-full align-top" />
+      <canvas ref={canvasRef} className={`w-full h-full align-top ${editTextMode ? 'pointer-events-none opacity-50' : ''}`} style={{ transition: 'opacity 0.2s' }} />
       <canvas 
         ref={drawCanvasRef}
-        className={`absolute top-0 left-0 w-full h-full align-top ${drawMode ? 'cursor-crosshair z-10 touch-none' : 'pointer-events-none'}`}
+        className={`absolute top-0 left-0 w-full h-full align-top ${drawMode ? 'cursor-crosshair z-20 touch-none' : 'pointer-events-none'}`}
         onMouseDown={startDrawing}
         onMouseUp={stopDrawing}
         onMouseOut={stopDrawing}
@@ -236,16 +289,21 @@ function PdfPage({
         onTouchEnd={stopDrawing}
         onTouchMove={draw}
       />
-      {editTextMode && (
-        <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden text-slate-800 dark:text-slate-200">
+      
+      {!drawMode && textItems.length > 0 && (
+        <div className={`absolute inset-0 overflow-hidden ${editTextMode ? 'z-30 pointer-events-none' : 'z-10'}`}>
           {textItems.map((item) => (
             <div
               key={item.id}
-              contentEditable
+              contentEditable={editTextMode}
               suppressContentEditableWarning
               onBlur={(e) => handleEditBlur(item.id, e.target.innerText)}
-              className="pointer-events-auto bg-white/40 dark:bg-slate-900/40 hover:outline hover:outline-1 hover:outline-indigo-500 focus:outline focus:outline-2 focus:outline-indigo-500 focus:bg-white dark:focus:bg-slate-900 focus:z-30 transition-all rounded-sm leading-none"
-              style={item.style}
+              className={`${editTextMode ? 'pointer-events-auto bg-white hover:outline hover:outline-1 hover:outline-indigo-500 focus:outline focus:outline-2 focus:outline-indigo-500 focus:z-40 text-black' : 'text-transparent bg-transparent pointer-events-auto cursor-text selection:bg-indigo-500/30'}`}
+              style={{
+                 ...item.style,
+                 color: editTextMode ? '#000' : 'transparent',
+                 caretColor: '#000'
+              }}
             >
               {item.text}
             </div>
@@ -270,9 +328,13 @@ function Thumbnail({ pageNumber, pdfDoc, isActive, onClick }: any) {
         const canvas = canvasRef.current;
         const ctx = canvas?.getContext('2d');
         if (!canvas || !ctx) return;
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
-        renderTask = page.render({ canvasContext: ctx, viewport });
+        const outputScale = window.devicePixelRatio || 1;
+        canvas.width = viewport.width * outputScale;
+        canvas.height = viewport.height * outputScale;
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
+        ctx.setTransform(outputScale, 0, 0, outputScale, 0, 0);
+        renderTask = page.render({ canvasContext: ctx, viewport, transform: [outputScale, 0, 0, outputScale, 0, 0] } as any);
         renderTask.promise.catch((e: any) => {
           if (e.name !== 'RenderingCancelledException' && !e.message?.includes('Rendering cancelled')) {
              console.error('Thumbnail render error:', e);
@@ -380,14 +442,15 @@ export function ViewerTool() {
   };
 
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [drawMode, setDrawMode] = useState(false);
-  const [editTextMode, setEditTextMode] = useState(false);
-  const [drawTool, setDrawTool] = useState<'pencil' | 'marker' | 'highlighter'>('pencil');
+  const [mode, setMode] = useState<'view' | 'draw' | 'editText'>('view');
+  const drawMode = mode === 'draw';
+  const editTextMode = mode === 'editText';
+  const [drawTool, setDrawTool] = useState<'pencil' | 'marker' | 'highlighter' | 'eraser'>('pencil');
   const [strokeSize, setStrokeSize] = useState(3);
   const [hasEdited, setHasEdited] = useState(false);
   
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarTab, setSidebarTab] = useState<'thumbnails' | 'outline' | 'search'>('thumbnails');
+  const [sidebarTab, setSidebarTab] = useState<'thumbnails' | 'outline' | 'search' | 'tools'>('thumbnails');
   const [darkMode, setDarkMode] = useState(false);
   const [viewMode, setViewMode] = useState<'continuous' | 'single'>('continuous');
   const [currentPage, setCurrentPage] = useState(1);
@@ -424,15 +487,16 @@ export function ViewerTool() {
         setOutline(out || []);
         if (window.innerWidth < 768) setSidebarOpen(false);
 
-        // Fit width + height
+        // Fit width bounds calculation
         if (scrollAreaRef.current) {
+           scrollAreaRef.current.scrollTop = 0;
+           scrollAreaRef.current.scrollLeft = 0;
            const page1 = await pdf.getPage(1);
            const vp = page1.getViewport({ scale: 1.0 });
-           const w = scrollAreaRef.current.clientWidth || window.innerWidth;
-           // Estimate height offset (toolbar)
-           const h = (scrollAreaRef.current.clientHeight || window.innerHeight) - 64; 
-           const fitScale = Math.min((w - 16) / vp.width, h / vp.height);
-           setBaseScale(Math.max(0.1, fitScale));
+           const containerWidth = scrollAreaRef.current.clientWidth || window.innerWidth;
+           const pageWidth = vp.width;
+           const newBaseScale = (containerWidth - 32) / pageWidth; // slight margin
+           setBaseScale(newBaseScale);
         } else {
            setBaseScale(window.innerWidth < 768 ? 0.6 : 1.0);
         }
@@ -661,11 +725,12 @@ export function ViewerTool() {
         ) : (
           <div className="flex flex-col flex-1 relative overflow-hidden h-full">
             {/* Toolbar */}
-            <div className="min-h-[64px] shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 flex flex-wrap items-center justify-between px-2 sm:px-4 py-2 gap-y-2 z-40 transition-colors">
+            <div className="min-h-[56px] shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 flex flex-wrap items-center justify-between px-2 sm:px-4 py-2 gap-y-2 z-40 transition-colors" style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top, 12px))' }}>
               <div className="flex items-center gap-2 sm:gap-3">
                 <button 
                   onClick={() => setSidebarOpen(!sidebarOpen)}
-                  className={`p-2 rounded-lg transition-colors ${sidebarOpen ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30' : 'hover:bg-slate-100 text-slate-600 dark:text-slate-300 dark:hover:bg-slate-800'}`}
+                  className={`flex items-center justify-center p-2 min-w-[44px] min-h-[44px] rounded-lg transition-colors ${sidebarOpen ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30' : 'hover:bg-slate-100 text-slate-600 dark:text-slate-300 dark:hover:bg-slate-800'}`}
+                  style={{ touchAction: 'manipulation' }}
                   title="Toggle Sidebar"
                 >
                   {sidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeftOpen className="w-5 h-5" />}
@@ -683,7 +748,7 @@ export function ViewerTool() {
                 </div>
                 
                 <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg items-center gap-1">
-                  <button onClick={() => setZoomFactor(s => Math.max(0.5, s - 0.25))} className="p-2.5 sm:p-1.5 text-slate-600 hover:text-indigo-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-md transition-colors"><ZoomOut className="w-5 h-5 sm:w-4 sm:h-4" /></button>
+                  <button onClick={() => setZoomFactor(s => Math.max(1.0, s - 0.25))} className="p-2.5 sm:p-1.5 text-slate-600 hover:text-indigo-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-md transition-colors"><ZoomOut className="w-5 h-5 sm:w-4 sm:h-4" /></button>
                   <span className="text-sm font-mono font-bold w-12 text-center text-slate-700 dark:text-slate-200">{Math.round(zoomFactor * 100)}%</span>
                   <button onClick={() => setZoomFactor(s => Math.min(5.0, s + 0.25))} className="p-2.5 sm:p-1.5 text-slate-600 hover:text-indigo-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-md transition-colors"><ZoomIn className="w-5 h-5 sm:w-4 sm:h-4" /></button>
                 </div>
@@ -697,26 +762,6 @@ export function ViewerTool() {
                 </button>
 
                 <div className="w-px h-6 bg-slate-200 dark:bg-slate-800 mx-1 hidden sm:block"></div>
-                
-                <button 
-                   onClick={() => { setEditTextMode(!editTextMode); if (!editTextMode) setDrawMode(false); }}
-                   className={`hidden sm:flex p-2.5 rounded-lg text-sm font-bold transition-all items-center gap-1.5 ${editTextMode ? 'bg-indigo-50 text-indigo-600 border border-indigo-200' : 'hover:bg-slate-100 text-slate-600 dark:text-slate-300 dark:hover:bg-slate-800'}`}
-                >
-                   <Type className="w-5 h-5 sm:w-4 sm:h-4" /> Edit Text
-                </button>
-
-                <button 
-                   onClick={() => { setDrawMode(!drawMode); if (!drawMode) setEditTextMode(false); }}
-                   className={`hidden sm:flex p-2.5 rounded-lg text-sm font-bold transition-all items-center gap-1.5 ${drawMode ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'hover:bg-slate-100 text-slate-600 dark:text-slate-300 dark:hover:bg-slate-800'}`}
-                >
-                   <PenTool className="w-5 h-5 sm:w-4 sm:h-4" /> Draw
-                </button>
-
-                {hasEdited && (
-                   <button onClick={handleSaveEditedPdf} className="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold transition-colors ml-1">
-                      Save
-                   </button>
-                )}
 
                 <button onClick={toggleFullscreen} className="block p-2.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg sm:ml-1">
                   {isFullscreen ? <Minimize className="w-6 h-6 sm:w-5 sm:h-5" /> : <Maximize className="w-6 h-6 sm:w-5 sm:h-5" />}
@@ -735,8 +780,54 @@ export function ViewerTool() {
                   <button onClick={() => setSidebarTab('thumbnails')} className={`flex-1 p-3 flex justify-center border-b-2 transition-colors ${sidebarTab === 'thumbnails' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`} title="Thumbnails"><LayoutGrid className="w-5 h-5" /></button>
                   <button onClick={() => setSidebarTab('outline')} className={`flex-1 p-3 flex justify-center border-b-2 transition-colors ${sidebarTab === 'outline' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`} title="Outline"><List className="w-5 h-5" /></button>
                   <button onClick={() => setSidebarTab('search')} className={`flex-1 p-3 flex justify-center border-b-2 transition-colors ${sidebarTab === 'search' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`} title="Search"><Search className="w-5 h-5" /></button>
+                  <button onClick={() => setSidebarTab('tools')} className={`flex-1 p-3 flex justify-center border-b-2 transition-colors ${sidebarTab === 'tools' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`} title="Tools"><Wrench className="w-5 h-5" /></button>
                 </div>
                 <div className="flex-1 overflow-y-auto overscroll-contain p-4 custom-scrollbar">
+                  {sidebarTab === 'tools' && (
+                    <div className="flex flex-col gap-3">
+                      <button 
+                        className={`flex items-center gap-2 p-3 min-h-[44px] rounded-lg font-bold transition-all ${mode === 'view' ? 'bg-indigo-50 text-indigo-600 border border-indigo-200' : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}`} 
+                        onClick={() => { setMode('view'); if (window.innerWidth < 768) setSidebarOpen(false); }}
+                      >
+                         <BookOpen className="w-5 h-5" /> View Mode
+                      </button>
+
+                      <button 
+                        className={`flex items-center gap-2 p-3 min-h-[44px] rounded-lg font-bold transition-all ${mode === 'draw' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}`} 
+                        onClick={() => { setMode('draw'); if (window.innerWidth < 768) setSidebarOpen(false); }}
+                      >
+                        <PenTool className="w-5 h-5" /> Draw
+                      </button>
+                      
+                      {mode === 'draw' && (
+                        <div className="flex flex-col gap-2 pl-4 py-2 border-l-2 border-slate-100 dark:border-slate-800 ml-2">
+                           <label className="text-xs font-bold text-slate-500 uppercase">Tool</label>
+                           <select value={drawTool} onChange={e => setDrawTool(e.target.value as any)} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2 text-sm font-bold outline-none cursor-pointer">
+                             <option value="pencil">Pencil</option>
+                             <option value="marker">Marker</option>
+                             <option value="highlighter">Highlighter</option>
+                             <option value="eraser">Eraser</option>
+                           </select>
+                           
+                           <label className="text-xs font-bold text-slate-500 uppercase mt-2">Size: {strokeSize}px</label>
+                           <input type="range" min="1" max="20" value={strokeSize} onChange={e => setStrokeSize(parseInt(e.target.value))} className="w-full cursor-pointer" />
+                        </div>
+                      )}
+
+                      <button 
+                        className={`flex items-center gap-2 p-3 min-h-[44px] rounded-lg font-bold transition-all ${mode === 'editText' ? 'bg-indigo-50 text-indigo-600 border border-indigo-200' : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'}`} 
+                        onClick={() => { setMode('editText'); if (window.innerWidth < 768) setSidebarOpen(false); }}
+                      >
+                        <Edit3 className="w-5 h-5" /> Edit Text
+                      </button>
+                      
+                      {hasEdited && (
+                         <button onClick={handleSaveEditedPdf} className="flex items-center justify-center gap-2 mt-4 p-3 min-h-[44px] bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors">
+                            <Download className="w-5 h-5" /> Save Changes
+                         </button>
+                      )}
+                    </div>
+                  )}
                   {sidebarTab === 'thumbnails' && (
                     <div className="flex flex-col">
                       {Array.from({ length: pdfDoc.numPages }).map((_, i) => (
@@ -781,67 +872,76 @@ export function ViewerTool() {
               {/* PDF Canvas Area */}
               <div 
                 ref={scrollAreaRef}
-                className={`flex-1 overflow-y-auto overflow-x-auto relative transition-colors overscroll-contain ${darkMode ? 'bg-slate-900' : 'bg-slate-200/60'} ${isPanning && !drawMode ? 'cursor-grabbing select-none' : zoomFactor > 1.0 && !drawMode ? 'cursor-grab' : ''}`}
-                onMouseDown={handleMouseDown}
-                onMouseUp={handleMouseUpOrLeave}
-                onMouseLeave={handleMouseUpOrLeave}
-                onMouseMove={handleMouseMove}
+                className={`flex-1 overflow-y-auto overflow-x-auto relative transition-colors overscroll-contain flex flex-col ${darkMode ? 'bg-slate-900' : 'bg-slate-200/60'}`}
                 onScroll={handleScroll}
               >
                 {/* Backdrop for single click to close sidebar on mobile */}
                 {sidebarOpen && <div className="absolute inset-0 z-20 bg-black/10 md:hidden" onClick={() => setSidebarOpen(false)}></div>}
                 
-                <div className={`min-w-max mx-auto flex flex-col items-center ${viewMode === 'continuous' ? '' : 'p-4 md:p-8'}`}>
-                   {viewMode === 'continuous' ? (
-                     Array.from({ length: pdfDoc.numPages }).map((_, i) => (
-                       <PdfPage 
-                         key={i}
-                         pageNumber={i + 1} 
-                         pdfDoc={pdfDoc} 
-                         scale={pdfScale} 
-                         drawMode={drawMode}
-                         drawTool={drawTool}
-                         strokeSize={strokeSize}
-                         onSaveDrawing={handleSaveDrawing}
-                         darkMode={darkMode}
-                         viewMode={viewMode}
-                         editTextMode={editTextMode}
-                         onTextEdit={handleTextEdit}
-                       />
-                     ))
-                  ) : (
-                     <div className="flex flex-col items-center relative gap-6 pb-20">
-                       <PdfPage 
-                         pageNumber={currentPage} 
-                         pdfDoc={pdfDoc} 
-                         scale={pdfScale} 
-                         drawMode={drawMode}
-                         drawTool={drawTool}
-                         strokeSize={strokeSize}
-                         onSaveDrawing={handleSaveDrawing}
-                         darkMode={darkMode}
-                         viewMode={viewMode}
-                         editTextMode={editTextMode}
-                         onTextEdit={handleTextEdit}
-                       />
-                     </div>
-                  )}
-                </div>
+                <TransformWrapper 
+                    initialScale={1} 
+                    minScale={1} 
+                    maxScale={4} 
+                    limitToBounds={true}
+                    centerOnInit={true}
+                    disabled={mode === 'draw' || mode === 'editText'}
+                    panning={{ disabled: mode === 'draw' || mode === 'editText' }}
+                    wheel={{ disabled: mode === 'draw' || mode === 'editText' }}
+                >
+                   <TransformComponent wrapperClass="!w-full !h-full flex-1" contentClass="!min-w-max mx-auto flex flex-col items-center">
+                    <div className={`w-full min-w-max mx-auto flex flex-col items-center py-4 ${viewMode === 'continuous' ? '' : 'p-4 md:p-8'}`}>
+                       {viewMode === 'continuous' ? (
+                         Array.from({ length: pdfDoc.numPages }).map((_, i) => (
+                           <PdfPage 
+                             key={i}
+                             pageNumber={i + 1} 
+                             pdfDoc={pdfDoc} 
+                             scale={pdfScale} 
+                             drawMode={drawMode}
+                             drawTool={drawTool}
+                             strokeSize={strokeSize}
+                             onSaveDrawing={handleSaveDrawing}
+                             darkMode={darkMode}
+                             viewMode={viewMode}
+                             editTextMode={editTextMode}
+                             onTextEdit={handleTextEdit}
+                           />
+                         ))
+                      ) : (
+                         <div className="flex flex-col items-center relative gap-6 pb-20">
+                           <PdfPage 
+                             pageNumber={currentPage} 
+                             pdfDoc={pdfDoc} 
+                             scale={pdfScale} 
+                             drawMode={drawMode}
+                             drawTool={drawTool}
+                             strokeSize={strokeSize}
+                             onSaveDrawing={handleSaveDrawing}
+                             darkMode={darkMode}
+                             viewMode={viewMode}
+                             editTextMode={editTextMode}
+                             onTextEdit={handleTextEdit}
+                           />
+                         </div>
+                      )}
+                    </div>
+                   </TransformComponent>
+                </TransformWrapper>
               </div>
 
             </div>
 
             {/* Single Page Navigation Overlay */}
             {viewMode === 'single' && (
-              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-4 py-2 rounded-full shadow-lg border border-slate-200 dark:border-slate-800 z-40">
-                <button onClick={() => jumpToPage(Math.max(1, currentPage - 1))} disabled={currentPage <= 1} className="p-2 text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full disabled:opacity-30">
+              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center justify-center gap-2 flex-nowrap bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-full shadow-lg border border-slate-200 dark:border-slate-800 z-40">
+                <button onClick={() => jumpToPage(Math.max(1, currentPage - 1))} disabled={currentPage <= 1} className="p-1 min-h-[36px] min-w-[36px] flex items-center justify-center text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full disabled:opacity-30 flex-shrink-0">
                   <ChevronLeft className="w-5 h-5" />
                 </button>
-                <div className="flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-300">
-                  <input type="number" min={1} max={pdfDoc.numPages} value={currentPage} onChange={e => jumpToPage(parseInt(e.target.value) || 1)} className="w-12 text-center bg-transparent border-b border-slate-300 dark:border-slate-600 focus:border-indigo-500 outline-none" />
-                  <span>/ {pdfDoc.numPages}</span>
+                <div className="flex items-center gap-1 text-sm font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap leading-none">
+                  <input type="number" min={1} max={pdfDoc?.numPages || 1} value={currentPage} onChange={e => jumpToPage(parseInt(e.target.value) || 1)} className="w-10 text-center bg-transparent border-b border-slate-300 dark:border-slate-600 focus:border-indigo-500 outline-none" />
+                  <span>/ {pdfDoc?.numPages || 1}</span>
                 </div>
-                <button onClick={() => jumpToPage(Math.min(pdfDoc.numPages, currentPage + 1))} disabled={currentPage >= pdfDoc.numPages} className="p-2 text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full disabled:opacity-30">
+                <button onClick={() => jumpToPage(Math.min(pdfDoc?.numPages || 1, currentPage + 1))} disabled={currentPage >= (pdfDoc?.numPages || 1)} className="p-1 min-h-[36px] min-w-[36px] flex items-center justify-center text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full disabled:opacity-30 flex-shrink-0">
                   <ChevronRight className="w-5 h-5" />
                 </button>
               </div>
@@ -854,6 +954,7 @@ export function ViewerTool() {
                   <option value="pencil">Pencil</option>
                   <option value="marker">Marker</option>
                   <option value="highlighter">Highlight</option>
+                  <option value="eraser">Eraser</option>
                 </select>
                 <div className="w-px h-4 bg-slate-300"></div>
                 <select value={strokeSize} onChange={e => setStrokeSize(parseInt(e.target.value))} className="bg-transparent text-sm font-bold outline-none cursor-pointer">

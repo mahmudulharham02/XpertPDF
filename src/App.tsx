@@ -12,7 +12,8 @@ import {
   ArrowLeft,
   FileImage,
   Scissors,
-  Lock
+  Lock,
+  Droplets
 } from 'lucide-react';
 import { MergeTool } from './components/tools/MergeTool';
 import { SignTool } from './components/tools/SignTool';
@@ -23,9 +24,10 @@ import { SettingsTool } from './components/tools/SettingsTool';
 import { PdfToImageTool } from './components/tools/PdfToImageTool';
 import { SplitTool } from './components/tools/SplitTool';
 import { EncryptTool } from './components/tools/EncryptTool';
+import { WatermarkTool } from './components/tools/WatermarkTool';
 import { t } from './lib/i18n';
 
-export type ToolType = 'dashboard' | 'viewer' | 'extract-images' | 'merge' | 'sign' | 'scan' | 'settings' | 'pdf-to-image' | 'split' | 'encrypt';
+export type ToolType = 'dashboard' | 'viewer' | 'extract-images' | 'merge' | 'sign' | 'scan' | 'settings' | 'pdf-to-image' | 'split' | 'encrypt' | 'watermark';
 
 export default function App() {
   const [activeTool, setActiveTool] = useState<ToolType>('dashboard');
@@ -179,6 +181,7 @@ export default function App() {
                 {activeTool === 'merge' && <MergeTool />}
                 {activeTool === 'split' && <SplitTool />}
                 {activeTool === 'encrypt' && <EncryptTool />}
+                {activeTool === 'watermark' && <WatermarkTool />}
                 {activeTool === 'sign' && <SignTool />}
                 {activeTool === 'scan' && <ScanTool />}
                 {activeTool === 'settings' && <SettingsTool currentTheme={theme} setTheme={handleSetTheme} currentFont={font} setFont={handleSetFont} language={language} setLanguage={handleSetLanguage} />}
@@ -198,6 +201,7 @@ function Dashboard({ setActiveTool, language }: { setActiveTool: (t: ToolType) =
     { id: 'pdf-to-image', title: t(language, 'pdfToImage'), icon: FileImage, color: 'text-emerald-600', bg: 'bg-emerald-100' },
     { id: 'merge', title: t(language, 'merge'), icon: Merge, color: 'text-amber-600', bg: 'bg-amber-100' },
     { id: 'split', title: 'Split PDF', icon: Scissors, color: 'text-fuchsia-600', bg: 'bg-fuchsia-100' },
+    { id: 'watermark', title: 'Watermark', icon: Droplets, color: 'text-cyan-600', bg: 'bg-cyan-100' },
     { id: 'encrypt', title: 'Protect & Unlock', icon: Lock, color: 'text-teal-600', bg: 'bg-teal-100' },
     { id: 'sign', title: t(language, 'sign'), icon: PenTool, color: 'text-rose-600', bg: 'bg-rose-100' },
     { id: 'scan', title: t(language, 'scan'), icon: Scan, color: 'text-indigo-600', bg: 'bg-indigo-100' },
