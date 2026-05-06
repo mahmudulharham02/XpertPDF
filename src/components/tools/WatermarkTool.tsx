@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
+import Draggable from 'react-draggable';
 import { UploadCloud, FileUp, Type, Image as ImageIcon, Settings2, Download, AlertCircle, Loader2 } from 'lucide-react';
 import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
 import { downloadBlob } from '../../lib/utils';
@@ -17,20 +18,22 @@ export function WatermarkTool() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState('');
   
-  // Settings
   const [opacity, setOpacity] = useState(25);
   const [scale, setScale] = useState(100);
   const [rotation, setRotation] = useState(45);
-  const [position, setPosition] = useState<'center' | 'topleft' | 'topright' | 'bottomleft' | 'bottomright'>('center');
-
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [previewError, setPreviewError] = useState('');
+  
+  const [watermarkPos, setWatermarkPos] = useState({ x: 0, y: 0 }); // Pixels relative to parent
+  const [pageRatio, setPageRatio] = useState(1);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const renderPreview = async () => {
-    if (!previewDoc || !canvasRef.current) return;
+    if (!previewDoc || !canvasRef.current || !containerRef.current) return;
     try {
       const page = await previewDoc.getPage(1); // Preview only first page
       const viewport = page.getViewport({ scale: 1.5 });
+      setPageRatio(viewport.width / viewport.height);
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
@@ -38,47 +41,13 @@ export function WatermarkTool() {
       const outputScale = window.devicePixelRatio || 1;
       canvas.width = viewport.width * outputScale;
       canvas.height = viewport.height * outputScale;
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
+      canvas.style.width = `100%`;
+      canvas.style.height = `100%`;
       ctx.setTransform(outputScale, 0, 0, outputScale, 0, 0);
       
       await page.render({ canvasContext: ctx, viewport, transform: [outputScale, 0, 0, outputScale, 0, 0] } as any).promise;
       
-      // Render overlay on top
-      ctx.save();
-      
-      // Apply position
-      let px = viewport.width / 2;
-      let py = viewport.height / 2;
-      const margin = 50;
-
-      if (position === 'topleft') { px = margin; py = margin; }
-      else if (position === 'topright') { px = viewport.width - margin; py = margin; }
-      else if (position === 'bottomleft') { px = margin; py = viewport.height - margin; }
-      else if (position === 'bottomright') { px = viewport.width - margin; py = viewport.height - margin; }
-
-      ctx.translate(px, py);
-      ctx.rotate((rotation * Math.PI) / 180);
-      ctx.globalAlpha = opacity / 100;
-
-      if (type === 'text') {
-        ctx.font = `bold ${(120 * scale) / 100}px sans-serif`;
-        ctx.fillStyle = '#000000';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(text, 0, 0);
-      } else if (type === 'image' && imagePreviewUrl) {
-        const img = new Image();
-        img.src = imagePreviewUrl;
-        await new Promise((resolve) => {
-          img.onload = resolve;
-        });
-        const w = (img.width * scale) / 100;
-        const h = (img.height * scale) / 100;
-        ctx.drawImage(img, -w / 2, -h / 2, w, h);
-      }
-
-      ctx.restore();
+      // We no longer render the watermark directly on the canvas preview to allow for dragging
     } catch (e: any) {
       console.error(e);
       setPreviewError('Could not process preview.');
@@ -87,7 +56,7 @@ export function WatermarkTool() {
 
   useEffect(() => {
      renderPreview();
-  }, [previewDoc, type, text, imagePreviewUrl, opacity, scale, rotation, position]);
+  }, [previewDoc]);
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -157,31 +126,32 @@ export function WatermarkTool() {
         
         let px = width / 2;
         let py = height / 2;
-        const margin = 50;
 
-        // PDF coordinates: origin at bottom-left
-        if (position === 'topleft') { px = margin; py = height - margin; }
-        else if (position === 'topright') { px = width - margin; py = height - margin; }
-        else if (position === 'bottomleft') { px = margin; py = margin; }
-        else if (position === 'bottomright') { px = width - margin; py = margin; }
+        if (containerRef.current) {
+           const rect = containerRef.current.getBoundingClientRect();
+           const normalizedX = (watermarkPos.x + rect.width / 2) / rect.width;
+           const normalizedY = (watermarkPos.y + rect.height / 2) / rect.height;
+           px = width * normalizedX;
+           py = height * (1 - normalizedY);
+        }
 
         if (type === 'text' && text) {
            const textWidth = font.widthOfTextAtSize(text, fontSize);
            const textHeight = font.heightAtSize(fontSize);
            
            page.drawText(text, {
-             x: position === 'center' ? px - textWidth / 2 : px,
-             y: position === 'center' ? py - textHeight / 2 : py,
+             x: px - textWidth / 2,
+             y: py - textHeight / 2,
              size: fontSize,
              font: font,
              color: rgb(0, 0, 0),
              opacity: opacity / 100,
-             rotate: degrees(-rotation) // pdf-lib rotation is CCW, canvas is CW, adjusting
+             rotate: degrees(-rotation) 
            });
         } else if (type === 'image' && imageToEmbed && dims) {
            page.drawImage(imageToEmbed, {
-             x: px - (position === 'center' ? dims.width / 2 : 0),
-             y: py - (position === 'center' ? dims.height / 2 : 0),
+             x: px - dims.width / 2,
+             y: py - dims.height / 2,
              width: dims.width,
              height: dims.height,
              opacity: opacity / 100,
@@ -192,7 +162,16 @@ export function WatermarkTool() {
 
       const watermarkedPdfBytes = await pdfDoc.save();
       const blob = new Blob([watermarkedPdfBytes], { type: 'application/pdf' });
-      downloadBlob(blob, fileName.replace('.pdf', '_watermarked.pdf'));
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName.replace('.pdf', '_watermarked.pdf');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      URL.revokeObjectURL(url);
     } catch (e: any) {
       console.error(e);
       alert(e.message || "Failed to apply watermark");
@@ -280,17 +259,6 @@ export function WatermarkTool() {
                )}
 
                <div className="flex flex-col gap-2">
-                 <label className="text-sm font-bold text-slate-700 flex justify-between">Position</label>
-                 <select value={position} onChange={e => setPosition(e.target.value as any)} className="w-full bg-white border border-slate-200 rounded-lg px-4 py-2 min-h-[44px] text-sm font-bold outline-none cursor-pointer">
-                   <option value="center">Center</option>
-                   <option value="topleft">Top Left</option>
-                   <option value="topright">Top Right</option>
-                   <option value="bottomleft">Bottom Left</option>
-                   <option value="bottomright">Bottom Right</option>
-                 </select>
-               </div>
-
-               <div className="flex flex-col gap-2">
                  <label className="text-sm font-bold text-slate-700 flex justify-between">
                    <span>Opacity</span>
                    <span className="text-indigo-600">{opacity}%</span>
@@ -328,8 +296,33 @@ export function WatermarkTool() {
 
             {/* Preview Canvas Area */}
             <div className="flex-1 bg-slate-100 overflow-y-auto p-4 flex flex-col items-center justify-center relative min-h-[300px]">
-               <div className="bg-white shadow-lg overflow-hidden border border-slate-200 rounded">
-                 <canvas ref={canvasRef} className="max-w-full h-auto" />
+               <div 
+                 ref={containerRef}
+                 className="bg-white shadow-lg overflow-hidden border border-slate-200 rounded relative" 
+                 style={{ width: '100%', maxWidth: '400px', aspectRatio: `${pageRatio}`, objectFit: 'contain' }}
+               >
+                 <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+                 
+                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                   <Draggable
+                     bounds="parent"
+                     position={watermarkPos}
+                     onDrag={(e, data) => setWatermarkPos({ x: data.x, y: data.y })}
+                   >
+                     <div 
+                       className="cursor-move select-none pointer-events-auto flex items-center justify-center" 
+                       style={{ opacity: opacity / 100 }}
+                     >
+                         <div style={{ transform: `scale(${scale / 100}) rotate(${rotation}deg)` }}>
+                           {type === 'text' ? (
+                             <span style={{ fontSize: '24px', fontWeight: 'bold', color: 'black', whiteSpace: 'nowrap' }}>{text}</span>
+                           ) : (
+                             imagePreviewUrl && <img src={imagePreviewUrl} alt="watermark" />
+                           )}
+                         </div>
+                     </div>
+                   </Draggable>
+                 </div>
                </div>
                <p className="absolute bottom-4 left-0 w-full text-center text-xs text-slate-500 font-bold px-4">
                  Previewing page 1 only. Watermark applies to all pages.
