@@ -5,10 +5,39 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
+/* Safe Area Mobile App layout */
 body {
   margin: 0;
   padding: 0;
   background-color: #f8fafc;
+  /* Allow selection of text */
+  -webkit-touch-callout: default;
+}
+
+/* PDF.js Text Layer */
+.textLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  opacity: 0.2; /* can set to 0.2 for debugging, or 0 for invisible but selectable */
+  line-height: 1.0;
+  color: transparent;
+}
+
+.textLayer > span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer ::selection {
+  background: rgba(0,0,255,1); /* Dark blue selection since text is transparent */
+  color: transparent;
 }
 
 /* Liquid App Backgrounds */

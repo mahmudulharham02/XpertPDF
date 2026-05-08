@@ -30,6 +30,7 @@ import { t } from './lib/i18n';
 export type ToolType = 'dashboard' | 'viewer' | 'extract-images' | 'merge' | 'sign' | 'scan' | 'settings' | 'pdf-to-image' | 'split' | 'encrypt' | 'watermark';
 
 export default function App() {
+  const [hideHeader, setHideHeader] = useState(false);
   const [activeTool, setActiveTool] = useState<ToolType>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [theme, setTheme] = useState('pitch-dark'); // light, pitch-dark, ocean, rose
@@ -97,7 +98,10 @@ export default function App() {
 
       {/* Sidebar - Liquid Panel style */}
       <aside className={`fixed md:static inset-y-0 left-0 w-64 liquid-panel flex flex-col z-50 transform transition-transform duration-300 ease-in-out md:m-4 md:rounded-[24px] ${isSidebarOpen ? 'translate-x-0 m-4 rounded-[24px]' : '-translate-x-full md:translate-x-0'}`}>
-        <div className="h-20 flex items-center justify-between px-6 border-b border-black/5 dark:border-white/10 shrink-0">
+        <div 
+          className="min-h-[56px] md:min-h-[64px] flex items-center justify-between px-6 border-b border-black/5 dark:border-white/10 shrink-0"
+          style={{ paddingTop: 'env(safe-area-inset-top)' }}
+        >
           <div className="flex items-center gap-3 text-indigo-500 dark:text-indigo-400">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-7 h-7">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -109,8 +113,9 @@ export default function App() {
             <span className="text-xl font-bold tracking-tight text-slate-800 dark:text-white">Xpert<span className="text-indigo-500 dark:text-indigo-400">PDF</span></span>
           </div>
           <button 
-            className="md:hidden p-3 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors rounded-xl hover:bg-black/5 dark:hover:bg-white/5"
+            className="md:hidden p-3 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors rounded-xl hover:bg-black/5 dark:hover:bg-white/5 min-w-[44px] min-h-[44px] flex items-center justify-center"
             onClick={() => setIsSidebarOpen(false)}
+            style={{ touchAction: 'manipulation' }}
           >
             <X className="w-5 h-5" />
           </button>
@@ -147,30 +152,37 @@ export default function App() {
         {/* Main Content Wrapper (Liquid Panel) */}
         <div className="flex-1 flex flex-col liquid-panel overflow-hidden md:rounded-[24px]">
           {/* Header */}
-          <header className="h-20 shrink-0 bg-white/30 dark:bg-black/20 border-b border-black/5 dark:border-white/10 flex items-center px-4 md:px-8 z-10 gap-4">
-            <button 
-              className="md:hidden liquid-btn-secondary p-3 rounded-xl"
-              onClick={() => setIsSidebarOpen(true)}
+          {!hideHeader && (
+            <header 
+              className="min-h-[56px] md:min-h-[64px] shrink-0 bg-white/30 dark:bg-black/20 border-b border-black/5 dark:border-white/10 flex items-center px-4 md:px-8 z-10 gap-4"
+              style={{ paddingTop: 'env(safe-area-inset-top)' }}
             >
-              <Menu className="w-5 h-5 text-slate-700 dark:text-slate-300" />
-            </button>
-            {activeTool !== 'dashboard' && (
               <button 
-                className="liquid-btn-secondary p-3 rounded-xl"
-                onClick={() => changeTool('dashboard')}
+                className="md:hidden liquid-btn-secondary p-3 rounded-xl min-w-[44px] min-h-[44px] flex items-center justify-center"
+                onClick={() => setIsSidebarOpen(true)}
+                style={{ touchAction: 'manipulation' }}
               >
-                <ArrowLeft className="w-5 h-5 text-slate-700 dark:text-slate-300" />
+                <Menu className="w-5 h-5 text-slate-700 dark:text-slate-300" />
               </button>
-            )}
-            <h1 className="text-xl font-semibold text-slate-800 dark:text-white">
-              {navItems.find(i => i.id === activeTool)?.label}
-            </h1>
-          </header>
+              {activeTool !== 'dashboard' && (
+                <button 
+                  className="liquid-btn-secondary p-3 rounded-xl min-w-[44px] min-h-[44px] flex items-center justify-center"
+                  onClick={() => changeTool('dashboard')}
+                  style={{ touchAction: 'manipulation' }}
+                >
+                  <ArrowLeft className="w-5 h-5 text-slate-700 dark:text-slate-300" />
+                </button>
+              )}
+              <h1 className="text-xl font-semibold text-slate-800 dark:text-white">
+                {navItems.find(i => i.id === activeTool)?.label}
+              </h1>
+            </header>
+          )}
 
           {/* Dynamic Content */}
           {activeTool === 'viewer' ? (
              <div className="flex-1 flex flex-col relative overflow-hidden bg-white dark:bg-slate-900 w-full h-full">
-                <ViewerTool />
+                <ViewerTool onPdfOpen={(isOpen) => setHideHeader(isOpen)} />
              </div>
           ) : (
             <div className="flex-1 overflow-auto relative p-4 md:p-8 custom-scrollbar">

@@ -3,10 +3,43 @@ import { useDropzone } from 'react-dropzone';
 import Draggable from 'react-draggable';
 import { UploadCloud, FileUp, Type, Image as ImageIcon, Settings2, Download, AlertCircle, Loader2 } from 'lucide-react';
 import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
-import { downloadBlob } from '../../lib/utils';
 import * as pdfjsLib from 'pdfjs-dist';
 
+// @ts-expect-error Vite handles this
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+
+class ToolErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    (this as any).state = { hasError: false };
+  }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  render() {
+    if ((this as any).state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full p-8 text-center text-rose-500">
+           <AlertCircle className="w-12 h-12 mb-4" />
+           <h2 className="text-xl font-bold mb-2">Something went wrong.</h2>
+           <p className="text-sm font-medium mb-4">The tool encountered a critical rendering error.</p>
+           <button onClick={() => (this as any).setState({hasError: false})} className="px-4 py-2 bg-rose-100 rounded-lg text-rose-700 font-bold">Retry</button>
+        </div>
+      );
+    }
+    return (this as any).props.children;
+  }
+}
+
 export function WatermarkTool() {
+  return (
+    <ToolErrorBoundary>
+       <WatermarkToolInner />
+    </ToolErrorBoundary>
+  );
+}
+
+function WatermarkToolInner() {
   const [file, setFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState('');
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
@@ -27,10 +60,16 @@ export function WatermarkTool() {
   const [watermarkPos, setWatermarkPos] = useState({ x: 0, y: 0 }); // Pixels relative to parent
   const [pageRatio, setPageRatio] = useState(1);
   const containerRef = useRef<HTMLDivElement>(null);
+  const draggableRef = useRef<HTMLDivElement>(null);
+  const renderTaskRef = useRef<any>(null);
 
   const renderPreview = async () => {
     if (!previewDoc || !canvasRef.current || !containerRef.current) return;
     try {
+      if (renderTaskRef.current) {
+         renderTaskRef.current.cancel();
+      }
+
       const page = await previewDoc.getPage(1); // Preview only first page
       const viewport = page.getViewport({ scale: 1.5 });
       setPageRatio(viewport.width / viewport.height);
@@ -45,17 +84,24 @@ export function WatermarkTool() {
       canvas.style.height = `100%`;
       ctx.setTransform(outputScale, 0, 0, outputScale, 0, 0);
       
-      await page.render({ canvasContext: ctx, viewport, transform: [outputScale, 0, 0, outputScale, 0, 0] } as any).promise;
+      const renderContext = { canvasContext: ctx, viewport, transform: [outputScale, 0, 0, outputScale, 0, 0] };
+      const renderTask = page.render(renderContext as any);
+      renderTaskRef.current = renderTask;
+      await renderTask.promise;
       
-      // We no longer render the watermark directly on the canvas preview to allow for dragging
     } catch (e: any) {
-      console.error(e);
-      setPreviewError('Could not process preview.');
+      if (e.name !== 'RenderingCancelledException') {
+         console.error(e);
+         setPreviewError('Could not process preview.');
+      }
     }
   };
 
   useEffect(() => {
      renderPreview();
+     return () => {
+        if (renderTaskRef.current) renderTaskRef.current.cancel();
+     };
   }, [previewDoc]);
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
@@ -72,7 +118,7 @@ export function WatermarkTool() {
       try {
         const arrayBuffer = await f.arrayBuffer();
         setPdfBytes(new Uint8Array(arrayBuffer));
-        const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+        const pdf = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer)).promise;
         setPreviewDoc(pdf);
       } catch (e) {
         console.error(e);
@@ -82,10 +128,10 @@ export function WatermarkTool() {
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
+    onDrop: onDrop as any,
     accept: { 'application/pdf': ['.pdf'] },
     multiple: false
-  });
+  } as any);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -305,19 +351,21 @@ export function WatermarkTool() {
                  
                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                    <Draggable
+                     nodeRef={draggableRef}
                      bounds="parent"
-                     position={watermarkPos}
-                     onDrag={(e, data) => setWatermarkPos({ x: data.x, y: data.y })}
+                     defaultPosition={{x: 0, y: 0}}
+                     onStop={(e, data) => setWatermarkPos({ x: data.x, y: data.y })}
                    >
                      <div 
-                       className="cursor-move select-none pointer-events-auto flex items-center justify-center" 
+                       ref={draggableRef}
+                       className="cursor-move select-none pointer-events-auto flex items-center justify-center absolute" 
                        style={{ opacity: opacity / 100 }}
                      >
                          <div style={{ transform: `scale(${scale / 100}) rotate(${rotation}deg)` }}>
                            {type === 'text' ? (
                              <span style={{ fontSize: '24px', fontWeight: 'bold', color: 'black', whiteSpace: 'nowrap' }}>{text}</span>
                            ) : (
-                             imagePreviewUrl && <img src={imagePreviewUrl} alt="watermark" />
+                             imagePreviewUrl ? <img src={imagePreviewUrl} alt="watermark" draggable={false} style={{ pointerEvents: 'none' }} /> : null
                            )}
                          </div>
                      </div>

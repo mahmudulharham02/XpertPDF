@@ -32,7 +32,7 @@ export function ExtractImagesTool() {
     
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+      const pdf = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer)).promise;
       const extracted: string[] = [];
       
       for (let i = 1; i <= pdf.numPages; i++) {
@@ -42,7 +42,7 @@ export function ExtractImagesTool() {
         for (let j = 0; j < ops.fnArray.length; j++) {
           if (
             ops.fnArray[j] === pdfjsLib.OPS.paintImageXObject || 
-            ops.fnArray[j] === pdfjsLib.OPS.paintJpegXObject ||
+            ops.fnArray[j] === (pdfjsLib.OPS as any).paintJpegXObject ||
             ops.fnArray[j] === pdfjsLib.OPS.paintInlineImageXObject
           ) {
             try {

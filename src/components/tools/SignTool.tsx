@@ -45,7 +45,7 @@ export function SignTool() {
         if (f.type.includes('pdf')) {
           setFileType('pdf');
           const arrayBuffer = await f.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+          const pdf = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer)).promise;
           const page = await pdf.getPage(1);
           const viewport = page.getViewport({ scale: 1.5 });
           const canvas = document.createElement('canvas');
@@ -53,7 +53,7 @@ export function SignTool() {
           if (ctx) {
             canvas.height = viewport.height;
             canvas.width = viewport.width;
-            await page.render({ canvasContext: ctx, viewport }).promise;
+            await page.render({ canvasContext: ctx, viewport } as any).promise;
             setPreviewUrl(canvas.toDataURL('image/jpeg', 0.8));
           }
         } else {

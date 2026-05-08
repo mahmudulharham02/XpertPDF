@@ -1,5 +1,5 @@
 'use client';
- 
+
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import {
@@ -19,9 +19,16 @@ import {
   ChevronUp,
   Home,
 } from 'lucide-react';
- 
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
- 
+
+// Configuration for large PDFs
+const CONFIG = {
+  MAX_CACHED_PAGES: 8,
+  RENDER_BUFFER: 3,
+  MIN_RENDER_INTERVAL: 100,
+};
+
 interface Annotation {
   id: string;
   type: 'highlight' | 'note' | 'draw';
@@ -34,18 +41,23 @@ interface Annotation {
   content?: string;
   points?: Array<{ x: number; y: number }>;
 }
- 
-interface DragState {
-  isDragging: boolean;
-  startX: number;
-  startY: number;
-  scrollLeft: number;
-  scrollTop: number;
+
+interface PageCache {
+  canvas: HTMLCanvasElement;
+  rendered: boolean;
+  timestamp: number;
 }
- 
-const MobileWebtoonPDFViewer: React.FC<{ pdfUrl: string; title?: string }> = ({
+
+interface TouchState {
+  initialDistance: number;
+  initialZoom: number;
+  isTouching: boolean;
+}
+
+const MobileWebtoonPDFViewer: React.FC<{ pdfUrl: string; title?: string; onHome?: () => void }> = ({
   pdfUrl,
   title = 'PDF Viewer',
+  onHome,
 }) => {
   // State
   const [totalPages, setTotalPages] = useState(0);
@@ -60,68 +72,116 @@ const MobileWebtoonPDFViewer: React.FC<{ pdfUrl: string; title?: string }> = ({
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [annotationMode, setAnnotationMode] = useState<'none' | 'highlight' | 'draw' | 'note'>('none');
   const [highlightColor, setHighlightColor] = useState('#FFFF00');
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [currentDrawPoints, setCurrentDrawPoints] = useState<Array<{ x: number; y: number }>>([]);
-  const [showTopBar, setShowTopBar] = useState(true);
-  const [lastScrollY, setLastScrollY] = useState(0);
- 
+  const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set());
+
   // Refs
-  const pdfDocRef = useRef<pdfjsLib.PDFDocument | null>(null);
+  const pdfDocRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  const pageCacheRef = useRef<Map<number, PageCache>>(new Map());
   const annotationCanvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
-  const dragStateRef = useRef<DragState>({
-    isDragging: false,
-    startX: 0,
-    startY: 0,
-    scrollLeft: 0,
-    scrollTop: 0,
+  const renderQueueRef = useRef<Set<number>>(new Set());
+  const lastRenderTimeRef = useRef(0);
+  const touchStateRef = useRef<TouchState>({
+    initialDistance: 0,
+    initialZoom: 100,
+    isTouching: false,
   });
-  const renderedPagesRef = useRef<Set<number>>(new Set());
- 
+
   // Load PDF
   useEffect(() => {
     const loadPDF = async () => {
       try {
         setIsLoading(true);
-        const pdf = await pdfjsLib.getDocument(pdfUrl).promise;
+        const pdf = await pdfjsLib.getDocument({
+          url: pdfUrl,
+          cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+          cMapPacked: true,
+        }).promise;
         pdfDocRef.current = pdf;
         setTotalPages(pdf.numPages);
-        // Render visible pages after a short delay
-        setTimeout(() => renderVisiblePages(), 100);
+        // Trigger initial render
+        setTimeout(() => {
+          calculateVisiblePages();
+        }, 50);
       } catch (err) {
         setError(`Failed to load PDF: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        console.error('PDF Load Error:', err);
       } finally {
         setIsLoading(false);
       }
     };
- 
+
     loadPDF();
   }, [pdfUrl]);
- 
-  // Render page on canvas
+
+  // Calculate visible pages
+  const calculateVisiblePages = useCallback(() => {
+    if (!containerRef.current || totalPages === 0) return;
+
+    const { scrollTop, clientHeight, scrollHeight } = containerRef.current;
+    const pageHeight = scrollHeight / totalPages;
+    const buffer = CONFIG.RENDER_BUFFER;
+
+    const firstVisible = Math.max(1, Math.floor(scrollTop / pageHeight) - buffer);
+    const lastVisible = Math.min(
+      totalPages,
+      Math.ceil((scrollTop + clientHeight) / pageHeight) + buffer
+    );
+
+    const newVisible = new Set<number>();
+    for (let i = firstVisible; i <= lastVisible; i++) {
+      newVisible.add(i);
+    }
+
+    setVisiblePages(newVisible);
+  }, [totalPages]);
+
+  // Scroll handler
+  const handleScroll = useCallback(() => {
+    calculateVisiblePages();
+  }, [calculateVisiblePages]);
+
+  // Render page with optimizations
   const renderPage = useCallback(
-    async (pageNum: number, canvas: HTMLCanvasElement) => {
-      if (!pdfDocRef.current || renderedPagesRef.current.has(pageNum)) return;
- 
+    async (pageNum: number) => {
+      if (!pdfDocRef.current) return;
+      if (pageCacheRef.current.has(pageNum)) return;
+
       try {
         const page = await pdfDocRef.current.getPage(pageNum);
+        
+        // Get natural page dimensions
+        const baseViewport = page.getViewport({ scale: 1 });
+        const pageWidth = baseViewport.width;
+        const pageHeight = baseViewport.height;
+        
+        // Calculate appropriate scale
+        const maxWidth = Math.min(window.innerWidth - 16, 800);
+        const baseScale = maxWidth / pageWidth;
+        const scale = baseScale * (zoom / 100) * window.devicePixelRatio;
+
         const viewport = page.getViewport({
-          scale: (zoom / 100) * window.devicePixelRatio,
+          scale,
           rotation,
         });
- 
+
+        // Create canvas
+        const canvas = document.createElement('canvas');
         canvas.width = viewport.width;
         canvas.height = viewport.height;
- 
-        const context = canvas.getContext('2d');
+        
+        const context = canvas.getContext('2d', { alpha: false });
         if (!context) return;
- 
+
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = 'medium';
+
+        // Render
         await page.render({
           canvasContext: context,
           viewport,
         }).promise;
- 
+
         // Apply dark mode
         if (darkMode) {
           const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
@@ -133,165 +193,104 @@ const MobileWebtoonPDFViewer: React.FC<{ pdfUrl: string; title?: string }> = ({
           }
           context.putImageData(imageData, 0, 0);
         }
- 
-        renderedPagesRef.current.add(pageNum);
-        redrawAnnotations(pageNum);
+
+        // Store in cache
+        pageCacheRef.current.set(pageNum, {
+          canvas,
+          rendered: true,
+          timestamp: Date.now(),
+        });
+
+        // Cleanup old pages
+        if (pageCacheRef.current.size > CONFIG.MAX_CACHED_PAGES) {
+          let oldestPage = -1;
+          let oldestTime = Date.now();
+
+          pageCacheRef.current.forEach((cache, page) => {
+            if (cache.timestamp < oldestTime && !visiblePages.has(page)) {
+              oldestTime = cache.timestamp;
+              oldestPage = page;
+            }
+          });
+
+          if (oldestPage !== -1) {
+            pageCacheRef.current.delete(oldestPage);
+          }
+        }
+
+        // Insert into DOM
+        const pageContainer = document.querySelector(`[data-page-container="${pageNum}"]`);
+        if (pageContainer) {
+          const existingCanvas = pageContainer.querySelector('canvas[data-type="page"]');
+          canvas.setAttribute('data-type', 'page');
+          
+          if (existingCanvas) {
+            existingCanvas.replaceWith(canvas);
+          } else {
+            pageContainer.appendChild(canvas);
+          }
+
+          // Update annotation canvas size
+          const annotationCanvas = annotationCanvasRefs.current.get(pageNum);
+          if (annotationCanvas) {
+            annotationCanvas.width = canvas.width;
+            annotationCanvas.height = canvas.height;
+            redrawAnnotations(pageNum);
+          }
+        }
       } catch (err) {
         console.error(`Error rendering page ${pageNum}:`, err);
       }
     },
-    [zoom, rotation, darkMode]
+    [zoom, rotation, darkMode, visiblePages]
   );
- 
+
   // Render visible pages
-  const renderVisiblePages = useCallback(() => {
-    if (!containerRef.current) return;
- 
-    const { scrollTop, clientHeight } = containerRef.current;
-    const pageElements = containerRef.current.querySelectorAll('[data-page]');
- 
-    pageElements.forEach((element) => {
-      const rect = element.getBoundingClientRect();
-      const pageNum = parseInt(element.getAttribute('data-page') || '0');
-      const canvas = canvasRefs.current.get(pageNum);
- 
-      // Render if visible or near visible
-      if (rect.top < clientHeight + 500 && rect.bottom > -500 && canvas) {
-        renderPage(pageNum, canvas);
-      }
-    });
-  }, [renderPage]);
- 
-  // Scroll handler
-  const handleScroll = useCallback(() => {
-    if (!containerRef.current) return;
- 
-    const currentScrollY = containerRef.current.scrollTop;
-    const delta = currentScrollY - lastScrollY;
- 
-    // Hide/show top bar based on scroll direction
-    if (delta > 10) {
-      setShowTopBar(false);
-    } else if (delta < -10) {
-      setShowTopBar(true);
-    }
- 
-    setLastScrollY(currentScrollY);
-    renderVisiblePages();
-  }, [lastScrollY, renderVisiblePages]);
- 
-  // Drag to pan
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (annotationMode !== 'none') return;
-    if (zoom <= 100) return; // Only allow panning when zoomed in
- 
-    dragStateRef.current = {
-      isDragging: true,
-      startX: e.clientX,
-      startY: e.clientY,
-      scrollLeft: containerRef.current?.scrollLeft || 0,
-      scrollTop: containerRef.current?.scrollTop || 0,
-    };
- 
-    e.preventDefault();
-  };
- 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!dragStateRef.current.isDragging || !containerRef.current) return;
- 
-    const dx = e.clientX - dragStateRef.current.startX;
-    const dy = e.clientY - dragStateRef.current.startY;
- 
-    containerRef.current.scrollLeft = dragStateRef.current.scrollLeft - dx;
-    containerRef.current.scrollTop = dragStateRef.current.scrollTop - dy;
-  };
- 
-  const handleMouseUp = () => {
-    dragStateRef.current.isDragging = false;
-  };
- 
-  // Text selection
-  const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const selection = window.getSelection();
-    if (selection && selection.toString().length > 0) {
-      // Text is selected, allow copy
+  useEffect(() => {
+    if (totalPages === 0 || visiblePages.size === 0) return;
+
+    const now = Date.now();
+    if (now - lastRenderTimeRef.current < CONFIG.MIN_RENDER_INTERVAL) {
       return;
     }
- 
-    handleMouseUp();
-  };
- 
-  // Annotation drawing
-  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (annotationMode === 'draw') {
-      e.preventDefault();
-      setIsDrawing(true);
-      const rect = e.currentTarget.getBoundingClientRect();
-      setCurrentDrawPoints([{ x: e.clientX - rect.left, y: e.clientY - rect.top }]);
-    } else if (annotationMode === 'highlight') {
-      handleMouseDown(e);
-    } else {
-      handleMouseDown(e);
-    }
-  };
- 
-  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (annotationMode === 'draw' && isDrawing) {
-      const rect = e.currentTarget.getBoundingClientRect();
-      setCurrentDrawPoints((prev) => [
-        ...prev,
-        { x: e.clientX - rect.left, y: e.clientY - rect.top },
-      ]);
-    } else {
-      handleMouseMove(e);
-    }
-  };
- 
-  const handleCanvasMouseUp_Draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (annotationMode === 'draw' && isDrawing) {
-      setIsDrawing(false);
-      const pageNum = parseInt(e.currentTarget.getAttribute('data-page') || '0');
-      const annotation: Annotation = {
-        id: Math.random().toString(),
-        type: 'draw',
-        pageNum,
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-        color: highlightColor,
-        points: currentDrawPoints,
-      };
-      setAnnotations((prev) => [...prev, annotation]);
-      setCurrentDrawPoints([]);
-      redrawAnnotations(pageNum);
-    } else {
-      handleCanvasMouseUp();
-    }
-  };
- 
+
+    lastRenderTimeRef.current = now;
+
+    // Sort pages by distance from viewport center
+    const sortedPages = Array.from(visiblePages).sort(
+      (a: number, b: number) => Math.abs(a - totalPages / 2) - Math.abs(b - totalPages / 2)
+    );
+
+    sortedPages.forEach((pageNum) => {
+      if (!renderQueueRef.current.has(pageNum)) {
+        renderQueueRef.current.add(pageNum);
+        renderPage(pageNum).finally(() => {
+          renderQueueRef.current.delete(pageNum);
+        });
+      }
+    });
+  }, [visiblePages, renderPage, totalPages]);
+
   // Redraw annotations
   const redrawAnnotations = (pageNum: number) => {
     const canvas = annotationCanvasRefs.current.get(pageNum);
     if (!canvas) return;
- 
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
- 
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
- 
     const pageAnnotations = annotations.filter((a) => a.pageNum === pageNum);
- 
+
     pageAnnotations.forEach((annotation) => {
-      ctx.globalAlpha = 0.4;
- 
       if (annotation.type === 'highlight') {
+        ctx.globalAlpha = 0.35;
         ctx.fillStyle = annotation.color;
         ctx.fillRect(annotation.x, annotation.y, annotation.width, annotation.height);
       } else if (annotation.type === 'draw' && annotation.points) {
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = 0.8;
         ctx.strokeStyle = annotation.color;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 2;
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
         ctx.beginPath();
@@ -302,40 +301,85 @@ const MobileWebtoonPDFViewer: React.FC<{ pdfUrl: string; title?: string }> = ({
         ctx.stroke();
       }
     });
- 
+
     ctx.globalAlpha = 1;
   };
- 
+
+  // Touch pinch zoom
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const touch1 = e.touches[0];
+      const touch2 = e.touches[1];
+      const distance = Math.hypot(
+        touch2.clientX - touch1.clientX,
+        touch2.clientY - touch1.clientY
+      );
+
+      touchStateRef.current = {
+        initialDistance: distance,
+        initialZoom: zoom,
+        isTouching: true,
+      };
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && touchStateRef.current.isTouching) {
+      e.preventDefault();
+      const touch1 = e.touches[0];
+      const touch2 = e.touches[1];
+      const distance = Math.hypot(
+        touch2.clientX - touch1.clientX,
+        touch2.clientY - touch1.clientY
+      );
+
+      const newZoom =
+        (touchStateRef.current.initialZoom * distance) / touchStateRef.current.initialDistance;
+      setZoom(Math.max(50, Math.min(200, newZoom)));
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStateRef.current.isTouching = false;
+  };
+
   // Search
   const handleSearch = useCallback(async (query: string) => {
     if (!pdfDocRef.current || !query.trim()) {
       setSearchResults([]);
       return;
     }
- 
+
     const pdf = pdfDocRef.current;
     const results = [];
- 
-    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-      try {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        const text = textContent.items
-          .filter((item) => 'str' in item)
-          .map((item) => ('str' in item ? item.str : ''))
-          .join(' ');
- 
-        if (text.toLowerCase().includes(query.toLowerCase())) {
-          results.push({ pageNum, text });
+
+    try {
+      for (let pageNum = 1; pageNum <= Math.min(pdf.numPages, 300); pageNum++) {
+        if (results.length >= 50) break;
+
+        try {
+          const page = await pdf.getPage(pageNum);
+          const textContent = await page.getTextContent();
+          const text = textContent.items
+            .filter((item) => 'str' in item)
+            .map((item) => ('str' in item ? item.str : ''))
+            .join(' ');
+
+          if (text.toLowerCase().includes(query.toLowerCase())) {
+            results.push({ pageNum, text });
+          }
+        } catch {
+          continue;
         }
-      } catch (err) {
-        console.error(`Error searching page ${pageNum}:`, err);
       }
+    } catch (err) {
+      console.error('Search error:', err);
     }
- 
+
     setSearchResults(results);
   }, []);
- 
+
   // Download
   const handleDownload = () => {
     const link = document.createElement('a');
@@ -343,116 +387,126 @@ const MobileWebtoonPDFViewer: React.FC<{ pdfUrl: string; title?: string }> = ({
     link.download = title || 'document.pdf';
     link.click();
   };
- 
+
   // Scroll to page
   const scrollToPage = (pageNum: number) => {
-    const element = containerRef.current?.querySelector(`[data-page="${pageNum}"]`);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth' });
-      setSidebarOpen(false);
-    }
+    if (!containerRef.current) return;
+    const pageHeight = containerRef.current.scrollHeight / totalPages;
+    const targetScroll = (pageNum - 1) * pageHeight;
+    containerRef.current.scrollTo({ top: targetScroll, behavior: 'smooth' });
+    setSidebarOpen(false);
   };
- 
+
   // Scroll to top
   const scrollToTop = () => {
     if (containerRef.current) {
       containerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
- 
+
   if (isLoading) {
     return (
       <div
         className={`flex items-center justify-center h-screen ${
-          darkMode ? 'bg-gray-900' : 'bg-white'
+          darkMode ? 'bg-gray-950' : 'bg-gray-50'
         }`}
       >
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4" />
-          <p className={`font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mx-auto mb-4" />
+          <p className={`font-medium text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
             Loading PDF...
           </p>
         </div>
       </div>
     );
   }
- 
+
   if (error) {
     return (
       <div
         className={`flex items-center justify-center h-screen ${
-          darkMode ? 'bg-gray-900' : 'bg-white'
+          darkMode ? 'bg-gray-950' : 'bg-gray-50'
         }`}
       >
         <div
-          className={`p-6 rounded-lg max-w-md ${
-            darkMode ? 'bg-gray-800' : 'bg-gray-50'
+          className={`p-6 rounded-lg max-w-md text-center ${
+            darkMode ? 'bg-gray-800 text-gray-200' : 'bg-white text-gray-900'
           }`}
         >
           <p className="text-red-500 font-semibold mb-2">Error</p>
-          <p className={darkMode ? 'text-gray-300' : 'text-gray-700'}>{error}</p>
+          <p className="text-sm">{error}</p>
         </div>
       </div>
     );
   }
- 
+
   return (
     <div
       ref={containerRef}
       className={`relative w-full h-screen overflow-y-auto overflow-x-hidden scroll-smooth transition-colors ${
-        darkMode ? 'bg-gray-900' : 'bg-white'
+        darkMode ? 'bg-gray-950' : 'bg-gray-50'
       }`}
       onScroll={handleScroll}
-      onMouseLeave={handleMouseUp}
-      style={{ scrollBehavior: 'smooth' }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
-      {/* Top Bar */}
+      {/* Top Bar - Sticky */}
       <div
-        className={`fixed top-0 left-0 right-0 z-40 transition-transform duration-300 ${
-          showTopBar ? 'translate-y-0' : '-translate-y-full'
-        } ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border-b shadow-sm`}
+        className={`sticky top-0 z-40 ${
+          darkMode
+            ? 'bg-gray-800 border-gray-700'
+            : 'bg-white border-gray-200'
+        } border-b shadow-md transition-colors`}
       >
-        <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center justify-between px-4 py-5 gap-3">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`p-2 rounded-lg transition ${
-              darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-100'
+            className={`p-2 rounded-lg transition flex-shrink-0 ${
+              darkMode
+                ? 'hover:bg-gray-700 text-gray-200'
+                : 'hover:bg-gray-100 text-gray-800'
             }`}
           >
             {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
- 
-          <h1 className={`flex-1 text-center text-sm font-semibold truncate mx-4 ${
-            darkMode ? 'text-gray-200' : 'text-gray-900'
-          }`}>
+
+          <h1
+            className={`flex-1 text-center text-sm font-semibold truncate ${
+              darkMode ? 'text-gray-100' : 'text-gray-900'
+            }`}
+          >
             {title}
           </h1>
- 
+
           <button
             onClick={() => setDarkMode(!darkMode)}
-            className={`p-2 rounded-lg transition ${
-              darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-100'
+            className={`p-2 rounded-lg transition flex-shrink-0 ${
+              darkMode
+                ? 'hover:bg-gray-700 text-gray-200'
+                : 'hover:bg-gray-100 text-gray-800'
             }`}
           >
             {darkMode ? <Sun size={20} /> : <Moon size={20} />}
           </button>
         </div>
       </div>
- 
-      {/* Sidebar */}
+
+      {/* Sidebar Overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/40"
+          className="fixed inset-0 z-30 bg-black/50"
           onClick={() => setSidebarOpen(false)}
         />
       )}
- 
+
+      {/* Sidebar */}
       <div
-        className={`fixed left-0 top-0 bottom-0 z-40 w-72 transition-transform duration-300 overflow-y-auto ${
+        className={`fixed left-0 top-0 bottom-0 z-40 w-80 transition-transform duration-300 overflow-y-auto ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         } ${darkMode ? 'bg-gray-800' : 'bg-white'}`}
       >
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-4 pt-28">
           {/* Search */}
           <div className="relative">
             <input
@@ -463,56 +517,61 @@ const MobileWebtoonPDFViewer: React.FC<{ pdfUrl: string; title?: string }> = ({
                 setSearchQuery(e.target.value);
                 handleSearch(e.target.value);
               }}
-              className={`w-full px-4 py-2 pl-10 rounded-lg border transition ${
+              className={`w-full px-4 py-2 pl-10 rounded-lg border text-sm transition ${
                 darkMode
-                  ? 'bg-gray-700 border-gray-600 text-white'
-                  : 'bg-gray-50 border-gray-300 text-gray-900'
-              }`}
+                  ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400'
+                  : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-500'
+              } focus:outline-none focus:border-blue-500`}
             />
-            <Search size={16} className="absolute left-3 top-3 text-gray-400" />
+            <Search size={16} className={`absolute left-3 top-3 ${
+              darkMode ? 'text-gray-500' : 'text-gray-400'
+            }`} />
           </div>
- 
+
           {/* Search Results */}
           {searchResults.length > 0 && (
             <div className="space-y-2">
-              <p className={`text-xs font-semibold ${
-                darkMode ? 'text-gray-400' : 'text-gray-500'
-              } uppercase`}>
-                Results ({searchResults.length})
+              <p className={`text-xs font-bold uppercase tracking-wide ${
+                darkMode ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                📄 {searchResults.length} Results
               </p>
-              {searchResults.map((result) => (
-                <button
-                  key={result.pageNum}
-                  onClick={() => scrollToPage(result.pageNum)}
-                  className={`w-full text-left p-2 rounded-lg transition ${
-                    darkMode
-                      ? 'hover:bg-gray-700 text-gray-300'
-                      : 'hover:bg-gray-100 text-gray-700'
-                  }`}
-                >
-                  <p className="text-sm font-medium">Page {result.pageNum}</p>
-                  <p className="text-xs truncate opacity-75">{result.text.substring(0, 50)}...</p>
-                </button>
-              ))}
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {searchResults.map((result) => (
+                  <button
+                    key={result.pageNum}
+                    onClick={() => scrollToPage(result.pageNum)}
+                    className={`w-full text-left p-3 rounded transition text-sm font-medium ${
+                      darkMode
+                        ? 'hover:bg-gray-700 text-gray-300'
+                        : 'hover:bg-gray-100 text-gray-700'
+                    }`}
+                  >
+                    Page {result.pageNum}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
- 
+
           {/* Pages */}
-          <div className="space-y-2">
-            <p className={`text-xs font-semibold ${
-              darkMode ? 'text-gray-400' : 'text-gray-500'
-            } uppercase`}>
-              Pages ({totalPages})
+          <div className={`space-y-2 pt-2 border-t ${
+            darkMode ? 'border-gray-700' : 'border-gray-200'
+          }`}>
+            <p className={`text-xs font-bold uppercase tracking-wide ${
+              darkMode ? 'text-gray-400' : 'text-gray-600'
+            }`}>
+              📑 Pages ({totalPages})
             </p>
-            <div className="grid grid-cols-4 gap-2 max-h-96 overflow-y-auto">
+            <div className="grid grid-cols-5 gap-2 max-h-64 overflow-y-auto">
               {Array.from({ length: totalPages }).map((_, idx) => (
                 <button
                   key={idx + 1}
                   onClick={() => scrollToPage(idx + 1)}
-                  className={`aspect-square rounded-lg font-medium text-xs transition ${
+                  className={`aspect-square rounded font-bold text-xs transition ${
                     darkMode
                       ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                      : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-900'
                   }`}
                 >
                   {idx + 1}
@@ -520,276 +579,247 @@ const MobileWebtoonPDFViewer: React.FC<{ pdfUrl: string; title?: string }> = ({
               ))}
             </div>
           </div>
- 
+
           {/* Tools */}
-          <div className="space-y-3 pt-4 border-t border-gray-300 dark:border-gray-700">
+          <div className={`space-y-3 pt-2 border-t ${
+            darkMode ? 'border-gray-700' : 'border-gray-200'
+          }`}>
             {/* Zoom */}
             <div className="space-y-2">
-              <p className={`text-xs font-semibold ${
-                darkMode ? 'text-gray-400' : 'text-gray-500'
+              <p className={`text-xs font-bold uppercase tracking-wide ${
+                darkMode ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                Zoom: {zoom}%
+                🔍 Zoom: {Math.round(zoom)}%
               </p>
               <div className="flex gap-2">
                 <button
                   onClick={() => setZoom(Math.max(50, zoom - 10))}
-                  className={`flex-1 p-2 rounded-lg transition flex items-center justify-center ${
+                  className={`flex-1 p-2 rounded transition flex items-center justify-center ${
                     darkMode
-                      ? 'bg-gray-700 hover:bg-gray-600'
-                      : 'bg-gray-100 hover:bg-gray-200'
+                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
                   }`}
                 >
                   <ZoomOut size={18} />
                 </button>
                 <button
                   onClick={() => setZoom(100)}
-                  className={`flex-1 p-2 rounded-lg transition text-xs font-medium ${
+                  className={`flex-1 p-2 rounded transition text-xs font-bold ${
                     darkMode
-                      ? 'bg-gray-700 hover:bg-gray-600'
-                      : 'bg-gray-100 hover:bg-gray-200'
+                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
                   }`}
                 >
-                  Reset
+                  100
                 </button>
                 <button
                   onClick={() => setZoom(Math.min(200, zoom + 10))}
-                  className={`flex-1 p-2 rounded-lg transition flex items-center justify-center ${
+                  className={`flex-1 p-2 rounded transition flex items-center justify-center ${
                     darkMode
-                      ? 'bg-gray-700 hover:bg-gray-600'
-                      : 'bg-gray-100 hover:bg-gray-200'
+                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
                   }`}
                 >
                   <ZoomIn size={18} />
                 </button>
               </div>
+              <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
+                💡 Two fingers to pinch zoom
+              </p>
             </div>
- 
+
             {/* Rotation */}
             <button
               onClick={() => setRotation((r) => (r + 90) % 360)}
-              className={`w-full p-3 rounded-lg transition font-medium flex items-center justify-center gap-2 ${
+              className={`w-full p-3 rounded transition font-medium flex items-center justify-center gap-2 text-sm ${
                 darkMode
-                  ? 'bg-gray-700 hover:bg-gray-600'
-                  : 'bg-gray-100 hover:bg-gray-200'
+                  ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
               }`}
             >
               <RotateCw size={18} />
               Rotate {rotation}°
             </button>
- 
+
+            {/* Annotations */}
+            <div className={`space-y-2 pt-2 border-t ${
+              darkMode ? 'border-gray-700' : 'border-gray-200'
+            }`}>
+              <p className={`text-xs font-bold uppercase tracking-wide ${
+                darkMode ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                ✏️ Annotations
+              </p>
+
+              <button
+                onClick={() => setAnnotationMode(annotationMode === 'highlight' ? 'none' : 'highlight')}
+                className={`w-full p-2 rounded transition flex items-center justify-center gap-2 text-sm font-medium ${
+                  annotationMode === 'highlight'
+                    ? 'bg-yellow-500 text-white'
+                    : darkMode
+                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
+                }`}
+              >
+                <Highlighter size={16} />
+                Highlight
+              </button>
+
+              <div className="flex gap-2">
+                <input
+                  type="color"
+                  value={highlightColor}
+                  onChange={(e) => setHighlightColor(e.target.value)}
+                  className="w-12 h-10 rounded cursor-pointer border-0"
+                />
+                <button
+                  onClick={() => setAnnotationMode(annotationMode === 'draw' ? 'none' : 'draw')}
+                  className={`flex-1 p-2 rounded transition flex items-center justify-center gap-2 text-sm font-medium ${
+                    annotationMode === 'draw'
+                      ? 'bg-blue-500 text-white'
+                      : darkMode
+                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
+                  }`}
+                >
+                  <Pen size={16} />
+                  Draw
+                </button>
+              </div>
+
+              <button
+                onClick={() => setAnnotationMode(annotationMode === 'note' ? 'none' : 'note')}
+                className={`w-full p-2 rounded transition flex items-center justify-center gap-2 text-sm font-medium ${
+                  annotationMode === 'note'
+                    ? 'bg-green-500 text-white'
+                    : darkMode
+                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
+                }`}
+              >
+                <MessageSquare size={16} />
+                Note
+              </button>
+
+              {annotations.length > 0 && (
+                <button
+                  onClick={() => setAnnotations([])}
+                  className={`w-full p-2 rounded transition flex items-center justify-center gap-2 text-sm font-medium ${
+                    darkMode
+                      ? 'text-red-400 hover:bg-gray-700'
+                      : 'text-red-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <Trash2 size={16} />
+                  Clear ({annotations.length})
+                </button>
+              )}
+            </div>
+
             {/* Download */}
             <button
               onClick={handleDownload}
-              className={`w-full p-3 rounded-lg transition font-medium flex items-center justify-center gap-2 ${
+              className={`w-full p-3 rounded transition font-bold flex items-center justify-center gap-2 text-sm ${
                 darkMode
-                  ? 'bg-blue-600 hover:bg-blue-700'
-                  : 'bg-blue-500 hover:bg-blue-600'
-              } text-white`}
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                  : 'bg-blue-500 hover:bg-blue-600 text-white'
+              }`}
             >
               <Download size={18} />
               Download
             </button>
-          </div>
- 
-          {/* Annotations */}
-          {annotations.length > 0 && (
-            <div className="space-y-2 pt-4 border-t border-gray-300 dark:border-gray-700">
-              <p className={`text-xs font-semibold ${
-                darkMode ? 'text-gray-400' : 'text-gray-500'
-              }`}>
-                Annotations ({annotations.length})
-              </p>
+
+            {/* Scroll */}
+            <div className="flex gap-2">
               <button
-                onClick={() => setAnnotations([])}
-                className={`w-full p-2 rounded-lg text-red-500 font-medium flex items-center justify-center gap-2 transition ${
+                onClick={scrollToTop}
+                className={`flex-1 p-2 rounded transition flex items-center justify-center gap-1 text-sm font-medium ${
                   darkMode
-                    ? 'hover:bg-gray-700'
-                    : 'hover:bg-gray-100'
+                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
                 }`}
               >
-                <Trash2 size={16} />
-                Clear All
+                <ChevronUp size={16} />
+                Top
+              </button>
+              <button
+                onClick={onHome}
+                className={`flex-1 p-2 rounded transition flex items-center justify-center gap-1 text-sm font-medium ${
+                  darkMode
+                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
+                }`}
+              >
+                <Home size={16} />
+                Home
               </button>
             </div>
-          )}
+          </div>
         </div>
       </div>
- 
-      {/* PDF Content */}
-      <div className="pt-16 pb-24">
+
+      {/* PDF Pages */}
+      <div className="pb-8">
         {Array.from({ length: totalPages }).map((_, idx) => {
           const pageNum = idx + 1;
           return (
             <div
               key={pageNum}
-              data-page={pageNum}
-              className="flex justify-center py-4 px-2"
+              data-page-container={pageNum}
+              className="flex justify-center py-3 px-2"
+              style={{
+                minHeight: 'auto',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
             >
-              <div className="relative">
-                <canvas
-                  ref={(el) => {
-                    if (el) canvasRefs.current.set(pageNum, el);
-                  }}
-                  style={{
-                    transform: `scale(${zoom / 100}) rotate(${rotation}deg)`,
-                    transformOrigin: 'top center',
-                    cursor: annotationMode === 'draw' ? 'crosshair' : zoom > 100 ? 'grab' : 'default',
-                  }}
-                  className={`block rounded-lg shadow-lg mx-auto max-w-full ${
-                    darkMode ? 'bg-gray-800' : 'bg-white'
-                  }`}
-                  onMouseDown={handleCanvasMouseDown}
-                  onMouseMove={handleCanvasMouseMove}
-                  onMouseUp={handleCanvasMouseUp_Draw}
-                  data-page={pageNum}
-                />
-                <canvas
-                  ref={(el) => {
-                    if (el) annotationCanvasRefs.current.set(pageNum, el);
-                  }}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    transform: `scale(${zoom / 100}) rotate(${rotation}deg)`,
-                    transformOrigin: 'top center',
-                    cursor: annotationMode === 'draw' ? 'crosshair' : 'default',
-                  }}
-                  className="rounded-lg"
-                />
-              </div>
+              {!visiblePages.has(pageNum) && (
+                <div className={`text-xs py-24 ${
+                  darkMode ? 'text-gray-600' : 'text-gray-300'
+                }`}>
+                  Page {pageNum}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
- 
-      {/* Floating Annotation Toolbar */}
-      {totalPages > 0 && (
+
+      {/* Mode Indicator */}
+      {annotationMode !== 'none' && (
         <div
-          className={`fixed bottom-0 left-0 right-0 z-20 transition-transform duration-300 ${
-            showTopBar ? 'translate-y-0' : 'translate-y-full'
-          } ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border-t shadow-lg`}
+          className={`fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg text-xs font-bold shadow-lg ${
+            darkMode
+              ? 'bg-gray-700 text-gray-200'
+              : 'bg-gray-800 text-white'
+          }`}
         >
-          <div className="flex items-center justify-between px-4 py-3 gap-2 overflow-x-auto">
-            {/* Annotation Tools */}
-            <div className="flex items-center gap-2">
-              {/* Highlight */}
-              <button
-                onClick={() => setAnnotationMode(annotationMode === 'highlight' ? 'none' : 'highlight')}
-                className={`p-3 rounded-lg transition ${
-                  annotationMode === 'highlight'
-                    ? 'bg-yellow-500 text-white'
-                    : darkMode
-                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                    : 'bg-gray-100 hover:bg-gray-200'
-                }`}
-                title="Highlight"
-              >
-                <Highlighter size={20} />
-              </button>
- 
-              {/* Color Picker */}
-              <input
-                type="color"
-                value={highlightColor}
-                onChange={(e) => setHighlightColor(e.target.value)}
-                className="w-12 h-12 rounded-lg cursor-pointer border-0"
-                title="Annotation color"
-              />
- 
-              {/* Draw */}
-              <button
-                onClick={() => setAnnotationMode(annotationMode === 'draw' ? 'none' : 'draw')}
-                className={`p-3 rounded-lg transition ${
-                  annotationMode === 'draw'
-                    ? 'bg-blue-500 text-white'
-                    : darkMode
-                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                    : 'bg-gray-100 hover:bg-gray-200'
-                }`}
-                title="Draw"
-              >
-                <Pen size={20} />
-              </button>
- 
-              {/* Note */}
-              <button
-                onClick={() => setAnnotationMode(annotationMode === 'note' ? 'none' : 'note')}
-                className={`p-3 rounded-lg transition ${
-                  annotationMode === 'note'
-                    ? 'bg-green-500 text-white'
-                    : darkMode
-                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                    : 'bg-gray-100 hover:bg-gray-200'
-                }`}
-                title="Add note"
-              >
-                <MessageSquare size={20} />
-              </button>
-            </div>
- 
-            {/* Spacer */}
-            <div className="flex-1" />
- 
-            {/* Scroll to Top */}
-            <button
-              onClick={scrollToTop}
-              className={`p-3 rounded-lg transition ${
-                darkMode
-                  ? 'bg-gray-700 hover:bg-gray-600'
-                  : 'bg-gray-100 hover:bg-gray-200'
-              }`}
-              title="Scroll to top"
-            >
-              <ChevronUp size={20} />
-            </button>
- 
-            {/* Home */}
-            <button
-              onClick={() => window.location.reload()}
-              className={`p-3 rounded-lg transition ${
-                darkMode
-                  ? 'bg-gray-700 hover:bg-gray-600'
-                  : 'bg-gray-100 hover:bg-gray-200'
-              }`}
-              title="Reload"
-            >
-              <Home size={20} />
-            </button>
-          </div>
- 
-          {/* Mode Indicator */}
-          {annotationMode !== 'none' && (
-            <div className={`px-4 py-2 text-center text-xs font-medium ${
-              darkMode
-                ? 'bg-gray-700 text-gray-300'
-                : 'bg-gray-100 text-gray-700'
-            }`}>
-              {annotationMode === 'highlight' && `Highlight Mode - Color: ${highlightColor}`}
-              {annotationMode === 'draw' && `Draw Mode - Color: ${highlightColor}`}
-              {annotationMode === 'note' && 'Note Mode'}
-            </div>
-          )}
+          {annotationMode === 'highlight' && `✏️ Highlight - ${highlightColor}`}
+          {annotationMode === 'draw' && `🖊️ Draw - ${highlightColor}`}
+          {annotationMode === 'note' && '📝 Note Mode'}
         </div>
       )}
- 
-      {/* Selection friendly overlay for text selection */}
-      <style>{`
-        canvas {
-          user-select: text;
-          -webkit-user-select: text;
-          -moz-user-select: text;
-          -ms-user-select: text;
-        }
-      `}</style>
     </div>
   );
 };
- 
-export function ViewerTool() {
+
+export function ViewerTool({ onPdfOpen }: { onPdfOpen?: (isOpen: boolean) => void }) {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [title, setTitle] = useState<string>('');
- 
+
+  useEffect(() => {
+    onPdfOpen?.(!!pdfUrl);
+    return () => {
+      onPdfOpen?.(false);
+    };
+  }, [pdfUrl, onPdfOpen]);
+
+  // Handle Home button in MobileWebtoonPDFViewer
+  const handleHome = useCallback(() => {
+    setPdfUrl(null);
+  }, []);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && file.type === 'application/pdf') {
@@ -797,7 +827,7 @@ export function ViewerTool() {
       setPdfUrl(URL.createObjectURL(file));
     }
   };
- 
+
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
@@ -806,14 +836,18 @@ export function ViewerTool() {
       setPdfUrl(URL.createObjectURL(file));
     }
   };
- 
+
   if (pdfUrl) {
-    return <MobileWebtoonPDFViewer pdfUrl={pdfUrl} title={title} />;
+    return <MobileWebtoonPDFViewer pdfUrl={pdfUrl} title={title} onHome={handleHome} />;
   }
- 
+
   return (
     <div
-      className="flex flex-col items-center justify-center p-10 h-full border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl m-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition"
+      className={`flex flex-col items-center justify-center p-8 h-full border-2 border-dashed rounded-xl m-4 cursor-pointer transition ${
+        false
+          ? 'border-gray-700 hover:bg-gray-800'
+          : 'border-gray-300 hover:bg-gray-50'
+      }`}
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleDrop}
       onClick={() => document.getElementById('pdf-upload')?.click()}
@@ -840,10 +874,15 @@ export function ViewerTool() {
           />
         </svg>
       </div>
-      <h3 className="text-xl font-bold text-gray-700 dark:text-gray-200 mb-2">Upload PDF</h3>
-      <p className="text-gray-500 dark:text-gray-400">Click or drag and drop a PDF file here</p>
+      <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-2">Upload PDF</h3>
+      <p className="text-gray-600 dark:text-gray-400 text-sm text-center">
+        Click or drag and drop a PDF file
+      </p>
+      <p className="text-gray-500 dark:text-gray-500 text-xs mt-3">
+        ⚡ Optimized for 500+ pages
+      </p>
     </div>
   );
 }
- 
+
 export default ViewerTool;

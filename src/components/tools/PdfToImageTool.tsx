@@ -36,7 +36,7 @@ export function PdfToImageTool() {
 
       try {
         const arrayBuffer = await f.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+        const pdf = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer)).promise;
         const totalPages = pdf.numPages;
         
         const extractedPages: PagePreview[] = [];
@@ -57,7 +57,7 @@ export function PdfToImageTool() {
             viewport: viewport,
           };
           
-          await page.render(renderContext).promise;
+          await page.render(renderContext as any).promise;
           
           // Store a thumbnail or default quality image just for preview
           const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
@@ -103,7 +103,7 @@ export function PdfToImageTool() {
   const getFullQualityImage = async (pageNum: number): Promise<string> => {
     if (!file) throw new Error("No file");
     const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+    const pdf = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer)).promise;
     const page = await pdf.getPage(pageNum);
     // Use a higher scale for physical output (e.g., 2.0 or 3.0)
     const viewport = page.getViewport({ scale: 3.0 });
@@ -126,7 +126,7 @@ export function PdfToImageTool() {
       viewport: viewport,
     };
     
-    await page.render(renderContext).promise;
+    await page.render(renderContext as any).promise;
     return canvas.toDataURL(`image/${format}`, quality);
   };
 
@@ -135,18 +135,18 @@ export function PdfToImageTool() {
     
     setIsProcessing(true);
     try {
-      const pagesToDownload = Array.from(selectedPages).sort((a, b) => a - b);
+      const pagesToDownload = Array.from(selectedPages).sort((a: any, b: any) => a - b);
       
       if (pagesToDownload.length === 1) {
         // Download single file
-        const pageNum = pagesToDownload[0];
+        const pageNum = pagesToDownload[0] as number;
         const dataUrl = await getFullQualityImage(pageNum);
         downloadFile(dataUrl, `${fileName.replace(/\.pdf$/i, '')}_page_${pageNum}.${format}`);
       } else {
         // Download ZIP
         const zip = new JSZip();
         for (const pageNum of pagesToDownload) {
-          const dataUrl = await getFullQualityImage(pageNum);
+          const dataUrl = await getFullQualityImage(pageNum as number);
           const base64Data = dataUrl.split(',')[1];
           zip.file(`${fileName.replace(/\.pdf$/i, '')}_page_${pageNum}.${format}`, base64Data, { base64: true });
         }

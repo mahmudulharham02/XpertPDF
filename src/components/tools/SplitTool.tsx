@@ -22,7 +22,7 @@ export function SplitTool() {
       setErrorMsg('');
       try {
         const arrayBuffer = await f.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+        const pdf = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer)).promise;
         setPdfDoc(pdf);
       } catch (err) {
         console.error(err);
