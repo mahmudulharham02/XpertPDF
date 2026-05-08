@@ -327,6 +327,6 @@ If you find XpertPDF helpful, please consider:
 [⬆ Back to top](#-xpertpdf)
 
 </div>
-<img width="720" height="1640" alt="5357" src="https://github.com/user-attachments/assets/8f91996c-f5d7-43ee-8a52-ce797e63de06" />
+
 <img width="720" height="1640" alt="5357" src="https://github.com/user-attachments/assets/febbc095-3a2f-4942-9b65-984b50cc926f" />
 <img width="720" height="1640" alt="5358" src="https://github.com/user-attachments/assets/cd31aabb-9673-4948-88e6-ad9b3871a7cb" />
