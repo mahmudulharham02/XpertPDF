@@ -328,5 +328,13 @@ If you find XpertPDF helpful, please consider:
 
 </div>
 
-<img width="720" height="1640" alt="5357" src="https://github.com/user-attachments/assets/febbc095-3a2f-4942-9b65-984b50cc926f" />
-<img width="720" height="1640" alt="5358" src="https://github.com/user-attachments/assets/cd31aabb-9673-4948-88e6-ad9b3871a7cb" />
+<p align="center">
+  <a href="https://github.com/user-attachments/assets/febbc095-3a2f-4942-9b65-984b50cc926f">
+    <img src="https://github.com/user-attachments/assets/febbc095-3a2f-4942-9b65-984b50cc926f" width="250">
+  </a>
+
+  <a href="https://github.com/user-attachments/assets/cd31aabb-9673-4948-88e6-ad9b3871a7cb">
+    <img src="https://github.com/user-attachments/assets/cd31aabb-9673-4948-88e6-ad9b3871a7cb" width="250">
+  </a>
+</p>
+
