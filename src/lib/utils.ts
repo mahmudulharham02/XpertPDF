@@ -20,6 +20,28 @@ export function fileToBase64(file: File): Promise<string> {
   });
 }
 
+// Sanitize PDF bytes by stripping any preamble before %PDF-
+export function sanitizePdfBytes(bytes: Uint8Array): Uint8Array {
+  // Find the index of '%PDF-' (37, 80, 68, 70, 45)
+  let offset = -1;
+  for (let i = 0; i < Math.min(bytes.length - 5, 2048); i++) {
+    if (
+      bytes[i] === 37 &&
+      bytes[i + 1] === 80 &&
+      bytes[i + 2] === 68 &&
+      bytes[i + 3] === 70 &&
+      bytes[i + 4] === 45
+    ) {
+      offset = i;
+      break;
+    }
+  }
+  if (offset > 0) {
+    return bytes.slice(offset);
+  }
+  return bytes;
+}
+
 // Download file utility
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);

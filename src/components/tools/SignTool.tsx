@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { UploadCloud, PenTool, Eraser, Download, Loader2, ArrowLeft } from 'lucide-react';
 import { PDFDocument } from 'pdf-lib';
-import { downloadBlob } from '../../lib/utils';
+import { downloadBlob, sanitizePdfBytes } from '../../lib/utils';
 import * as pdfjsLib from 'pdfjs-dist';
 
 // @ts-expect-error Vite handles this
@@ -214,7 +214,7 @@ export function SignTool() {
 
       if (fileType === 'pdf') {
         const fileBytes = await file.arrayBuffer();
-        const pdfDoc = await PDFDocument.load(fileBytes);
+        const pdfDoc = await PDFDocument.load(sanitizePdfBytes(new Uint8Array(fileBytes)));
         const pages = pdfDoc.getPages();
         const firstPage = pages[0];
         

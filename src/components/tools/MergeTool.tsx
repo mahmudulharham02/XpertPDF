@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { UploadCloud, Layers, ArrowDownUp, CheckCircle2, ChevronRight, Trash2 } from 'lucide-react';
 import { PDFDocument } from 'pdf-lib';
-import { downloadBlob, fileToBase64 } from '../../lib/utils';
+import { downloadBlob, fileToBase64, sanitizePdfBytes } from '../../lib/utils';
 
 export function MergeTool() {
   const [files, setFiles] = useState<File[]>([]);
@@ -51,7 +51,7 @@ export function MergeTool() {
 
       for (const file of files) {
         const arrayBuffer = await file.arrayBuffer();
-        const pdf = await PDFDocument.load(arrayBuffer);
+        const pdf = await PDFDocument.load(sanitizePdfBytes(new Uint8Array(arrayBuffer)));
         const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
         copiedPages.forEach((page) => mergedPdf.addPage(page));
       }

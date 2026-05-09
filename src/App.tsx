@@ -182,7 +182,7 @@ export default function App() {
           {/* Dynamic Content */}
           {activeTool === 'viewer' ? (
              <div className="flex-1 flex flex-col relative overflow-hidden bg-white dark:bg-slate-900 w-full h-full">
-                <ViewerTool onPdfOpen={(isOpen) => setHideHeader(isOpen)} />
+                <ViewerTool onPdfOpen={(isOpen) => setHideHeader(isOpen)} onBack={() => { changeTool('dashboard'); setHideHeader(false); }} />
              </div>
           ) : (
             <div className="flex-1 overflow-auto relative p-4 md:p-8 custom-scrollbar">

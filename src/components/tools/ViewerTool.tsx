@@ -1,888 +1,521 @@
-'use client';
-
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import {
-  Menu,
-  X,
-  ZoomIn,
-  ZoomOut,
-  RotateCw,
-  Moon,
-  Sun,
-  Download,
-  Search,
-  Highlighter,
-  Pen,
-  MessageSquare,
-  Trash2,
-  ChevronUp,
-  Home,
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
+import { 
+  Menu, X, ZoomIn, ZoomOut, Search, Settings, ArrowLeft, Loader2, PenTool, Download, Home
 } from 'lucide-react';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// @ts-expect-error Vite handles this
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
-// Configuration for large PDFs
-const CONFIG = {
-  MAX_CACHED_PAGES: 8,
-  RENDER_BUFFER: 3,
-  MIN_RENDER_INTERVAL: 100,
-};
-
-interface Annotation {
-  id: string;
-  type: 'highlight' | 'note' | 'draw';
-  pageNum: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  color: string;
-  content?: string;
-  points?: Array<{ x: number; y: number }>;
+// --- Interfaces ---
+interface ViewerToolProps {
+  onPdfOpen?: (isOpen: boolean) => void;
+  onBack?: () => void;
 }
 
-interface PageCache {
-  canvas: HTMLCanvasElement;
-  rendered: boolean;
-  timestamp: number;
+interface Stroke {
+   points: {x: number, y: number}[];
+   color: string;
+   thickness: number;
 }
 
-interface TouchState {
-  initialDistance: number;
-  initialZoom: number;
-  isTouching: boolean;
+interface Annotations {
+   highlights: { id: string, rect: {x: number, y: number, w: number, h: number}, color: string }[];
+   strokes: Stroke[];
 }
 
-const MobileWebtoonPDFViewer: React.FC<{ pdfUrl: string; title?: string; onHome?: () => void }> = ({
-  pdfUrl,
-  title = 'PDF Viewer',
-  onHome,
-}) => {
-  // State
-  const [totalPages, setTotalPages] = useState(0);
-  const [zoom, setZoom] = useState(100);
-  const [rotation, setRotation] = useState(0);
-  const [darkMode, setDarkMode] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  
+  const [numPages, setNumPages] = useState(0);
+  const [firstPageRatio, setFirstPageRatio] = useState(1.414);
+  const [baseScale, setBaseScale] = useState(1);
+  const [toolbarVisible, setToolbarVisible] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<Array<{ pageNum: number; text: string }>>([]);
-  const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [annotationMode, setAnnotationMode] = useState<'none' | 'highlight' | 'draw' | 'note'>('none');
+  
+  // Annotation state
+  const [annotationMode, setAnnotationMode] = useState<'none' | 'highlight' | 'draw'>('none');
   const [highlightColor, setHighlightColor] = useState('#FFFF00');
-  const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set());
+  const [drawColor, setDrawColor] = useState('#EF4444');
+  const [annotations, setAnnotations] = useState<Record<number, Annotations>>({});
 
-  // Refs
-  const pdfDocRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const pageCacheRef = useRef<Map<number, PageCache>>(new Map());
-  const annotationCanvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
-  const renderQueueRef = useRef<Set<number>>(new Set());
-  const lastRenderTimeRef = useRef(0);
-  const touchStateRef = useRef<TouchState>({
-    initialDistance: 0,
-    initialZoom: 100,
-    isTouching: false,
-  });
 
-  // Load PDF
   useEffect(() => {
-    const loadPDF = async () => {
-      try {
-        setIsLoading(true);
-        const pdf = await pdfjsLib.getDocument({
-          url: pdfUrl,
-          cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
-          cMapPacked: true,
-        }).promise;
-        pdfDocRef.current = pdf;
-        setTotalPages(pdf.numPages);
-        // Trigger initial render
-        setTimeout(() => {
-          calculateVisiblePages();
-        }, 50);
-      } catch (err) {
-        setError(`Failed to load PDF: ${err instanceof Error ? err.message : 'Unknown error'}`);
-        console.error('PDF Load Error:', err);
-      } finally {
-        setIsLoading(false);
+    if (onPdfOpen) onPdfOpen(!!pdfFile);
+  }, [pdfFile, onPdfOpen]);
+
+  const loadPdf = async (file: File) => {
+    setLoading(true); setError('');
+    try {
+      const buffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({
+        data: buffer,
+        cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+        cMapPacked: true,
+      }).promise;
+      setPdfDoc(pdf);
+      setNumPages(pdf.numPages);
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 1 });
+      setFirstPageRatio(viewport.width / viewport.height);
+      setPdfFile(file);
+    } catch (err: any) {
+       setError('Failed to load PDF. Please make sure the file is a valid PDF and the worker is correctly loaded.');
+       console.error("PDF Load Error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const updateBaseScale = () => {
+      if (containerRef.current && pdfDoc) {
+        pdfDoc.getPage(1).then((page) => {
+           const viewport = page.getViewport({ scale: 1 });
+           const containerWidth = containerRef.current!.clientWidth;
+           setBaseScale((containerWidth - 24) / viewport.width);
+        });
       }
     };
+    updateBaseScale();
+    window.addEventListener('resize', updateBaseScale);
+    return () => window.removeEventListener('resize', updateBaseScale);
+  }, [pdfDoc]);
 
-    loadPDF();
-  }, [pdfUrl]);
-
-  // Calculate visible pages
-  const calculateVisiblePages = useCallback(() => {
-    if (!containerRef.current || totalPages === 0) return;
-
-    const { scrollTop, clientHeight, scrollHeight } = containerRef.current;
-    const pageHeight = scrollHeight / totalPages;
-    const buffer = CONFIG.RENDER_BUFFER;
-
-    const firstVisible = Math.max(1, Math.floor(scrollTop / pageHeight) - buffer);
-    const lastVisible = Math.min(
-      totalPages,
-      Math.ceil((scrollTop + clientHeight) / pageHeight) + buffer
-    );
-
-    const newVisible = new Set<number>();
-    for (let i = firstVisible; i <= lastVisible; i++) {
-      newVisible.add(i);
-    }
-
-    setVisiblePages(newVisible);
-  }, [totalPages]);
-
-  // Scroll handler
-  const handleScroll = useCallback(() => {
-    calculateVisiblePages();
-  }, [calculateVisiblePages]);
-
-  // Render page with optimizations
-  const renderPage = useCallback(
-    async (pageNum: number) => {
-      if (!pdfDocRef.current) return;
-      if (pageCacheRef.current.has(pageNum)) return;
-
-      try {
-        const page = await pdfDocRef.current.getPage(pageNum);
-        
-        // Get natural page dimensions
-        const baseViewport = page.getViewport({ scale: 1 });
-        const pageWidth = baseViewport.width;
-        const pageHeight = baseViewport.height;
-        
-        // Calculate appropriate scale
-        const maxWidth = Math.min(window.innerWidth - 16, 800);
-        const baseScale = maxWidth / pageWidth;
-        const scale = baseScale * (zoom / 100) * window.devicePixelRatio;
-
-        const viewport = page.getViewport({
-          scale,
-          rotation,
-        });
-
-        // Create canvas
-        const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        
-        const context = canvas.getContext('2d', { alpha: false });
-        if (!context) return;
-
-        context.imageSmoothingEnabled = true;
-        context.imageSmoothingQuality = 'medium';
-
-        // Render
-        await page.render({
-          canvasContext: context,
-          viewport,
-        }).promise;
-
-        // Apply dark mode
-        if (darkMode) {
-          const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-          const data = imageData.data;
-          for (let i = 0; i < data.length; i += 4) {
-            data[i] = 255 - data[i];
-            data[i + 1] = 255 - data[i + 1];
-            data[i + 2] = 255 - data[i + 2];
-          }
-          context.putImageData(imageData, 0, 0);
-        }
-
-        // Store in cache
-        pageCacheRef.current.set(pageNum, {
-          canvas,
-          rendered: true,
-          timestamp: Date.now(),
-        });
-
-        // Cleanup old pages
-        if (pageCacheRef.current.size > CONFIG.MAX_CACHED_PAGES) {
-          let oldestPage = -1;
-          let oldestTime = Date.now();
-
-          pageCacheRef.current.forEach((cache, page) => {
-            if (cache.timestamp < oldestTime && !visiblePages.has(page)) {
-              oldestTime = cache.timestamp;
-              oldestPage = page;
-            }
-          });
-
-          if (oldestPage !== -1) {
-            pageCacheRef.current.delete(oldestPage);
-          }
-        }
-
-        // Insert into DOM
-        const pageContainer = document.querySelector(`[data-page-container="${pageNum}"]`);
-        if (pageContainer) {
-          const existingCanvas = pageContainer.querySelector('canvas[data-type="page"]');
-          canvas.setAttribute('data-type', 'page');
-          
-          if (existingCanvas) {
-            existingCanvas.replaceWith(canvas);
-          } else {
-            pageContainer.appendChild(canvas);
-          }
-
-          // Update annotation canvas size
-          const annotationCanvas = annotationCanvasRefs.current.get(pageNum);
-          if (annotationCanvas) {
-            annotationCanvas.width = canvas.width;
-            annotationCanvas.height = canvas.height;
-            redrawAnnotations(pageNum);
-          }
-        }
-      } catch (err) {
-        console.error(`Error rendering page ${pageNum}:`, err);
-      }
-    },
-    [zoom, rotation, darkMode, visiblePages]
-  );
-
-  // Render visible pages
-  useEffect(() => {
-    if (totalPages === 0 || visiblePages.size === 0) return;
-
-    const now = Date.now();
-    if (now - lastRenderTimeRef.current < CONFIG.MIN_RENDER_INTERVAL) {
-      return;
-    }
-
-    lastRenderTimeRef.current = now;
-
-    // Sort pages by distance from viewport center
-    const sortedPages = Array.from(visiblePages).sort(
-      (a: number, b: number) => Math.abs(a - totalPages / 2) - Math.abs(b - totalPages / 2)
-    );
-
-    sortedPages.forEach((pageNum) => {
-      if (!renderQueueRef.current.has(pageNum)) {
-        renderQueueRef.current.add(pageNum);
-        renderPage(pageNum).finally(() => {
-          renderQueueRef.current.delete(pageNum);
-        });
-      }
-    });
-  }, [visiblePages, renderPage, totalPages]);
-
-  // Redraw annotations
-  const redrawAnnotations = (pageNum: number) => {
-    const canvas = annotationCanvasRefs.current.get(pageNum);
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const pageAnnotations = annotations.filter((a) => a.pageNum === pageNum);
-
-    pageAnnotations.forEach((annotation) => {
-      if (annotation.type === 'highlight') {
-        ctx.globalAlpha = 0.35;
-        ctx.fillStyle = annotation.color;
-        ctx.fillRect(annotation.x, annotation.y, annotation.width, annotation.height);
-      } else if (annotation.type === 'draw' && annotation.points) {
-        ctx.globalAlpha = 0.8;
-        ctx.strokeStyle = annotation.color;
-        ctx.lineWidth = 2;
-        ctx.lineJoin = 'round';
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        annotation.points.forEach((point, index) => {
-          if (index === 0) ctx.moveTo(point.x, point.y);
-          else ctx.lineTo(point.x, point.y);
-        });
-        ctx.stroke();
-      }
-    });
-
-    ctx.globalAlpha = 1;
-  };
-
-  // Touch pinch zoom
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length === 2) {
-      e.preventDefault();
-      const touch1 = e.touches[0];
-      const touch2 = e.touches[1];
-      const distance = Math.hypot(
-        touch2.clientX - touch1.clientX,
-        touch2.clientY - touch1.clientY
-      );
-
-      touchStateRef.current = {
-        initialDistance: distance,
-        initialZoom: zoom,
-        isTouching: true,
-      };
-    }
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length === 2 && touchStateRef.current.isTouching) {
-      e.preventDefault();
-      const touch1 = e.touches[0];
-      const touch2 = e.touches[1];
-      const distance = Math.hypot(
-        touch2.clientX - touch1.clientX,
-        touch2.clientY - touch1.clientY
-      );
-
-      const newZoom =
-        (touchStateRef.current.initialZoom * distance) / touchStateRef.current.initialDistance;
-      setZoom(Math.max(50, Math.min(200, newZoom)));
-    }
-  };
-
-  const handleTouchEnd = () => {
-    touchStateRef.current.isTouching = false;
-  };
-
-  // Search
-  const handleSearch = useCallback(async (query: string) => {
-    if (!pdfDocRef.current || !query.trim()) {
-      setSearchResults([]);
-      return;
-    }
-
-    const pdf = pdfDocRef.current;
-    const results = [];
-
-    try {
-      for (let pageNum = 1; pageNum <= Math.min(pdf.numPages, 300); pageNum++) {
-        if (results.length >= 50) break;
-
-        try {
-          const page = await pdf.getPage(pageNum);
-          const textContent = await page.getTextContent();
-          const text = textContent.items
-            .filter((item) => 'str' in item)
-            .map((item) => ('str' in item ? item.str : ''))
-            .join(' ');
-
-          if (text.toLowerCase().includes(query.toLowerCase())) {
-            results.push({ pageNum, text });
-          }
-        } catch {
-          continue;
-        }
-      }
-    } catch (err) {
-      console.error('Search error:', err);
-    }
-
-    setSearchResults(results);
+  const updatePageAnnotations = useCallback((pageNum: number, updateFn: (prev: Annotations) => Annotations) => {
+     setAnnotations(prev => {
+        const pageAnns = prev[pageNum] || { highlights: [], strokes: [] };
+        return { ...prev, [pageNum]: updateFn(pageAnns) };
+     });
   }, []);
 
-  // Download
+  const clearAllAnnotations = () => {
+     if(window.confirm('Clear all annotations?')) {
+        setAnnotations({});
+     }
+  };
+
   const handleDownload = () => {
-    const link = document.createElement('a');
-    link.href = pdfUrl;
-    link.download = title || 'document.pdf';
-    link.click();
+     if (!pdfFile) return;
+     const link = document.createElement("a");
+     link.href = URL.createObjectURL(pdfFile);
+     link.download = pdfFile.name;
+     link.click();
   };
 
-  // Scroll to page
-  const scrollToPage = (pageNum: number) => {
-    if (!containerRef.current) return;
-    const pageHeight = containerRef.current.scrollHeight / totalPages;
-    const targetScroll = (pageNum - 1) * pageHeight;
-    containerRef.current.scrollTo({ top: targetScroll, behavior: 'smooth' });
-    setSidebarOpen(false);
-  };
-
-  // Scroll to top
-  const scrollToTop = () => {
-    if (containerRef.current) {
-      containerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  };
-
-  if (isLoading) {
+  if (!pdfFile) {
     return (
-      <div
-        className={`flex items-center justify-center h-screen ${
-          darkMode ? 'bg-gray-950' : 'bg-gray-50'
-        }`}
-      >
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mx-auto mb-4" />
-          <p className={`font-medium text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-            Loading PDF...
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div
-        className={`flex items-center justify-center h-screen ${
-          darkMode ? 'bg-gray-950' : 'bg-gray-50'
-        }`}
-      >
-        <div
-          className={`p-6 rounded-lg max-w-md text-center ${
-            darkMode ? 'bg-gray-800 text-gray-200' : 'bg-white text-gray-900'
-          }`}
-        >
-          <p className="text-red-500 font-semibold mb-2">Error</p>
-          <p className="text-sm">{error}</p>
-        </div>
-      </div>
+       <div className="flex-1 flex flex-col items-center justify-center p-6 bg-slate-50 dark:bg-slate-900 h-full w-full max-w-full relative">
+         {onBack && (
+            <button onClick={onBack} className="absolute top-6 left-6 p-3 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 text-slate-700 dark:text-slate-300">
+               <ArrowLeft className="w-6 h-6" />
+            </button>
+         )}
+         <div className="max-w-md w-full p-8 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 text-center">
+            <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-4">Open PDF Document</h2>
+            <label className="block w-full py-4 px-4 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-medium rounded-xl cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors border-2 border-dashed border-indigo-200 dark:border-indigo-800">
+               <input type="file" accept=".pdf" className="hidden" onChange={e => {
+                  if(e.target.files && e.target.files.length > 0) loadPdf(e.target.files[0]);
+               }} />
+               Select a PDF File
+            </label>
+            {loading && <p className="mt-4 text-sm text-slate-500 font-medium"><Loader2 className="w-5 h-5 animate-spin inline mr-2 align-middle" /> Loading PDF...</p>}
+            {error && <p className="mt-4 text-sm text-rose-500 font-bold bg-rose-50 dark:bg-rose-900/30 p-3 rounded-lg border border-rose-100 dark:border-rose-800">{error}</p>}
+         </div>
+       </div>
     );
   }
 
   return (
-    <div
-      ref={containerRef}
-      className={`relative w-full h-screen overflow-y-auto overflow-x-hidden scroll-smooth transition-colors ${
-        darkMode ? 'bg-gray-950' : 'bg-gray-50'
-      }`}
-      onScroll={handleScroll}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-    >
-      {/* Top Bar - Sticky */}
-      <div
-        className={`sticky top-0 z-40 ${
-          darkMode
-            ? 'bg-gray-800 border-gray-700'
-            : 'bg-white border-gray-200'
-        } border-b shadow-md transition-colors`}
+    <div className="flex-1 flex flex-col h-full bg-slate-200 dark:bg-slate-950 relative overflow-hidden text-slate-900 dark:text-slate-100">
+      
+      {/* Top Bar */}
+      <div 
+        className={`absolute top-0 left-0 right-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-black/10 dark:border-white/10 transition-transform duration-300 ${toolbarVisible ? 'translate-y-0' : '-translate-y-full'}`}
+        style={{ paddingTop: 'env(safe-area-inset-top)' }}
       >
-        <div className="flex items-center justify-between px-4 py-5 gap-3">
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`p-2 rounded-lg transition flex-shrink-0 ${
-              darkMode
-                ? 'hover:bg-gray-700 text-gray-200'
-                : 'hover:bg-gray-100 text-gray-800'
-            }`}
-          >
-            {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
-
-          <h1
-            className={`flex-1 text-center text-sm font-semibold truncate ${
-              darkMode ? 'text-gray-100' : 'text-gray-900'
-            }`}
-          >
-            {title}
-          </h1>
-
-          <button
-            onClick={() => setDarkMode(!darkMode)}
-            className={`p-2 rounded-lg transition flex-shrink-0 ${
-              darkMode
-                ? 'hover:bg-gray-700 text-gray-200'
-                : 'hover:bg-gray-100 text-gray-800'
-            }`}
-          >
-            {darkMode ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
-        </div>
+         <div className="flex items-center justify-between px-2 sm:px-4 min-h-[56px] md:min-h-[64px]">
+            <div className="flex items-center gap-2">
+               <button onClick={() => setSidebarOpen(true)} className="p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5" style={{ touchAction: 'manipulation' }}>
+                  <Menu className="w-5 h-5" />
+               </button>
+               {onBack && (
+                  <button onClick={onBack} className="p-2 -ml-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 hidden sm:block" style={{ touchAction: 'manipulation' }}>
+                     <ArrowLeft className="w-5 h-5" />
+                  </button>
+               )}
+               <span className="font-semibold text-xs sm:text-sm truncate max-w-[150px] sm:max-w-[200px] md:max-w-[300px]">
+                  {pdfFile.name}
+               </span>
+            </div>
+            <div className="flex items-center gap-1 sm:gap-2">
+               <button onClick={() => setAnnotationMode(m => m === 'draw' ? 'none' : 'draw')} className={`p-2 rounded-xl text-sm font-bold transition-colors ${annotationMode === 'draw' ? 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400' : 'hover:bg-black/5'}`}>
+                  <PenTool className="w-4 h-4 sm:w-5 sm:h-5" />
+               </button>
+               <button onClick={() => { setPdfFile(null); setPdfDoc(null); }} className="px-3 py-1.5 ml-2 text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors border border-black/5 dark:border-white/5 shadow-sm">
+                  Close
+               </button>
+            </div>
+         </div>
       </div>
 
       {/* Sidebar Overlay */}
       {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/50"
-          onClick={() => setSidebarOpen(false)}
-        />
+         <div className="absolute inset-0 z-40 bg-black/50 transition-opacity" onClick={() => setSidebarOpen(false)} />
       )}
 
       {/* Sidebar */}
-      <div
-        className={`fixed left-0 top-0 bottom-0 z-40 w-80 transition-transform duration-300 overflow-y-auto ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        } ${darkMode ? 'bg-gray-800' : 'bg-white'}`}
-      >
-        <div className="p-4 space-y-4 pt-28">
-          {/* Search */}
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                handleSearch(e.target.value);
-              }}
-              className={`w-full px-4 py-2 pl-10 rounded-lg border text-sm transition ${
-                darkMode
-                  ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400'
-                  : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-500'
-              } focus:outline-none focus:border-blue-500`}
-            />
-            <Search size={16} className={`absolute left-3 top-3 ${
-              darkMode ? 'text-gray-500' : 'text-gray-400'
-            }`} />
-          </div>
-
-          {/* Search Results */}
-          {searchResults.length > 0 && (
-            <div className="space-y-2">
-              <p className={`text-xs font-bold uppercase tracking-wide ${
-                darkMode ? 'text-gray-400' : 'text-gray-600'
-              }`}>
-                📄 {searchResults.length} Results
-              </p>
-              <div className="space-y-1 max-h-48 overflow-y-auto">
-                {searchResults.map((result) => (
-                  <button
-                    key={result.pageNum}
-                    onClick={() => scrollToPage(result.pageNum)}
-                    className={`w-full text-left p-3 rounded transition text-sm font-medium ${
-                      darkMode
-                        ? 'hover:bg-gray-700 text-gray-300'
-                        : 'hover:bg-gray-100 text-gray-700'
-                    }`}
-                  >
-                    Page {result.pageNum}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Pages */}
-          <div className={`space-y-2 pt-2 border-t ${
-            darkMode ? 'border-gray-700' : 'border-gray-200'
-          }`}>
-            <p className={`text-xs font-bold uppercase tracking-wide ${
-              darkMode ? 'text-gray-400' : 'text-gray-600'
-            }`}>
-              📑 Pages ({totalPages})
-            </p>
-            <div className="grid grid-cols-5 gap-2 max-h-64 overflow-y-auto">
-              {Array.from({ length: totalPages }).map((_, idx) => (
-                <button
-                  key={idx + 1}
-                  onClick={() => scrollToPage(idx + 1)}
-                  className={`aspect-square rounded font-bold text-xs transition ${
-                    darkMode
-                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                      : 'bg-gray-200 hover:bg-gray-300 text-gray-900'
-                  }`}
-                >
-                  {idx + 1}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Tools */}
-          <div className={`space-y-3 pt-2 border-t ${
-            darkMode ? 'border-gray-700' : 'border-gray-200'
-          }`}>
-            {/* Zoom */}
-            <div className="space-y-2">
-              <p className={`text-xs font-bold uppercase tracking-wide ${
-                darkMode ? 'text-gray-400' : 'text-gray-600'
-              }`}>
-                🔍 Zoom: {Math.round(zoom)}%
-              </p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setZoom(Math.max(50, zoom - 10))}
-                  className={`flex-1 p-2 rounded transition flex items-center justify-center ${
-                    darkMode
-                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                      : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
-                  }`}
-                >
-                  <ZoomOut size={18} />
-                </button>
-                <button
-                  onClick={() => setZoom(100)}
-                  className={`flex-1 p-2 rounded transition text-xs font-bold ${
-                    darkMode
-                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                      : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
-                  }`}
-                >
-                  100
-                </button>
-                <button
-                  onClick={() => setZoom(Math.min(200, zoom + 10))}
-                  className={`flex-1 p-2 rounded transition flex items-center justify-center ${
-                    darkMode
-                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                      : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
-                  }`}
-                >
-                  <ZoomIn size={18} />
-                </button>
-              </div>
-              <p className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>
-                💡 Two fingers to pinch zoom
-              </p>
-            </div>
-
-            {/* Rotation */}
-            <button
-              onClick={() => setRotation((r) => (r + 90) % 360)}
-              className={`w-full p-3 rounded transition font-medium flex items-center justify-center gap-2 text-sm ${
-                darkMode
-                  ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
-              }`}
-            >
-              <RotateCw size={18} />
-              Rotate {rotation}°
+      <div className={`absolute top-0 bottom-0 left-0 w-72 bg-white dark:bg-slate-900 z-50 transition-transform duration-300 flex flex-col shadow-2xl ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+         <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center shrink-0 min-h-[56px] md:min-h-[64px]" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+            <h3 className="font-bold">Tools & Pages</h3>
+            <button onClick={() => setSidebarOpen(false)} className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500">
+               <X className="w-5 h-5" />
             </button>
-
-            {/* Annotations */}
-            <div className={`space-y-2 pt-2 border-t ${
-              darkMode ? 'border-gray-700' : 'border-gray-200'
-            }`}>
-              <p className={`text-xs font-bold uppercase tracking-wide ${
-                darkMode ? 'text-gray-400' : 'text-gray-600'
-              }`}>
-                ✏️ Annotations
-              </p>
-
-              <button
-                onClick={() => setAnnotationMode(annotationMode === 'highlight' ? 'none' : 'highlight')}
-                className={`w-full p-2 rounded transition flex items-center justify-center gap-2 text-sm font-medium ${
-                  annotationMode === 'highlight'
-                    ? 'bg-yellow-500 text-white'
-                    : darkMode
-                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                    : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
-                }`}
-              >
-                <Highlighter size={16} />
-                Highlight
-              </button>
-
-              <div className="flex gap-2">
-                <input
-                  type="color"
-                  value={highlightColor}
-                  onChange={(e) => setHighlightColor(e.target.value)}
-                  className="w-12 h-10 rounded cursor-pointer border-0"
-                />
-                <button
-                  onClick={() => setAnnotationMode(annotationMode === 'draw' ? 'none' : 'draw')}
-                  className={`flex-1 p-2 rounded transition flex items-center justify-center gap-2 text-sm font-medium ${
-                    annotationMode === 'draw'
-                      ? 'bg-blue-500 text-white'
-                      : darkMode
-                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                      : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
-                  }`}
-                >
-                  <Pen size={16} />
-                  Draw
-                </button>
-              </div>
-
-              <button
-                onClick={() => setAnnotationMode(annotationMode === 'note' ? 'none' : 'note')}
-                className={`w-full p-2 rounded transition flex items-center justify-center gap-2 text-sm font-medium ${
-                  annotationMode === 'note'
-                    ? 'bg-green-500 text-white'
-                    : darkMode
-                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                    : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
-                }`}
-              >
-                <MessageSquare size={16} />
-                Note
-              </button>
-
-              {annotations.length > 0 && (
-                <button
-                  onClick={() => setAnnotations([])}
-                  className={`w-full p-2 rounded transition flex items-center justify-center gap-2 text-sm font-medium ${
-                    darkMode
-                      ? 'text-red-400 hover:bg-gray-700'
-                      : 'text-red-600 hover:bg-gray-100'
-                  }`}
-                >
-                  <Trash2 size={16} />
-                  Clear ({annotations.length})
-                </button>
-              )}
+         </div>
+         <div className="p-4 flex-1 overflow-y-auto space-y-6">
+            <div className="space-y-3">
+               <h4 className="text-xs font-bold uppercase text-slate-400 tracking-wider">Document Tools</h4>
+               <button onClick={handleDownload} className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 text-sm font-medium border border-slate-200 dark:border-slate-800">
+                  <span className="flex items-center gap-2"><Download className="w-4 h-4 text-indigo-500" /> Save Original</span>
+               </button>
+               <button onClick={() => { setPdfFile(null); setPdfDoc(null); setSidebarOpen(false); if(onBack) onBack(); }} className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 text-sm font-medium border border-slate-200 dark:border-slate-800">
+                  <span className="flex items-center gap-2"><Home className="w-4 h-4 text-emerald-500" /> Convert Tools Home</span>
+               </button>
             </div>
 
-            {/* Download */}
-            <button
-              onClick={handleDownload}
-              className={`w-full p-3 rounded transition font-bold flex items-center justify-center gap-2 text-sm ${
-                darkMode
-                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                  : 'bg-blue-500 hover:bg-blue-600 text-white'
-              }`}
-            >
-              <Download size={18} />
-              Download
-            </button>
-
-            {/* Scroll */}
-            <div className="flex gap-2">
-              <button
-                onClick={scrollToTop}
-                className={`flex-1 p-2 rounded transition flex items-center justify-center gap-1 text-sm font-medium ${
-                  darkMode
-                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                    : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
-                }`}
-              >
-                <ChevronUp size={16} />
-                Top
-              </button>
-              <button
-                onClick={onHome}
-                className={`flex-1 p-2 rounded transition flex items-center justify-center gap-1 text-sm font-medium ${
-                  darkMode
-                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                    : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
-                }`}
-              >
-                <Home size={16} />
-                Home
-              </button>
+            <div className="space-y-3">
+               <div className="flex justify-between items-center">
+                 <h4 className="text-xs font-bold uppercase text-slate-400 tracking-wider">Annotations</h4>
+                 {Object.keys(annotations).length > 0 && (
+                    <button onClick={clearAllAnnotations} className="text-xs text-rose-500 hover:underline">Clear All</button>
+                 )}
+               </div>
+               
+               <div className="grid grid-cols-2 gap-2">
+                 <div className="flex flex-col gap-2">
+                   <div className="text-xs font-bold text-slate-500">Pen Color</div>
+                   <input type="color" value={drawColor} onChange={e => setDrawColor(e.target.value)} className="w-full h-8 rounded border-none cursor-pointer p-0" />
+                 </div>
+               </div>
             </div>
-          </div>
-        </div>
-      </div>
 
-      {/* PDF Pages */}
-      <div className="pb-8">
-        {Array.from({ length: totalPages }).map((_, idx) => {
-          const pageNum = idx + 1;
-          return (
-            <div
-              key={pageNum}
-              data-page-container={pageNum}
-              className="flex justify-center py-3 px-2"
-              style={{
-                minHeight: 'auto',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              {!visiblePages.has(pageNum) && (
-                <div className={`text-xs py-24 ${
-                  darkMode ? 'text-gray-600' : 'text-gray-300'
-                }`}>
-                  Page {pageNum}
-                </div>
-              )}
+            <div className="space-y-3">
+               <h4 className="text-xs font-bold uppercase text-slate-400 tracking-wider">Pages ({numPages})</h4>
+               <div className="grid grid-cols-4 gap-2">
+                  {Array.from({ length: numPages }).map((_, i) => (
+                     <button key={i} onClick={() => {
+                        const el = document.getElementById(`pdf-page-${i+1}`);
+                        if (el) el.scrollIntoView({ behavior: 'smooth' });
+                        setSidebarOpen(false);
+                     }} className="aspect-square flex flex-col items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-bold border border-black/5 dark:border-white/5">
+                        {i + 1}
+                     </button>
+                  ))}
+               </div>
             </div>
-          );
-        })}
+         </div>
       </div>
 
-      {/* Mode Indicator */}
-      {annotationMode !== 'none' && (
-        <div
-          className={`fixed bottom-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg text-xs font-bold shadow-lg ${
-            darkMode
-              ? 'bg-gray-700 text-gray-200'
-              : 'bg-gray-800 text-white'
-          }`}
-        >
-          {annotationMode === 'highlight' && `✏️ Highlight - ${highlightColor}`}
-          {annotationMode === 'draw' && `🖊️ Draw - ${highlightColor}`}
-          {annotationMode === 'note' && '📝 Note Mode'}
-        </div>
-      )}
-    </div>
-  );
-};
-
-export function ViewerTool({ onPdfOpen }: { onPdfOpen?: (isOpen: boolean) => void }) {
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [title, setTitle] = useState<string>('');
-
-  useEffect(() => {
-    onPdfOpen?.(!!pdfUrl);
-    return () => {
-      onPdfOpen?.(false);
-    };
-  }, [pdfUrl, onPdfOpen]);
-
-  // Handle Home button in MobileWebtoonPDFViewer
-  const handleHome = useCallback(() => {
-    setPdfUrl(null);
-  }, []);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && file.type === 'application/pdf') {
-      setTitle(file.name);
-      setPdfUrl(URL.createObjectURL(file));
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file && file.type === 'application/pdf') {
-      setTitle(file.name);
-      setPdfUrl(URL.createObjectURL(file));
-    }
-  };
-
-  if (pdfUrl) {
-    return <MobileWebtoonPDFViewer pdfUrl={pdfUrl} title={title} onHome={handleHome} />;
-  }
-
-  return (
-    <div
-      className={`flex flex-col items-center justify-center p-8 h-full border-2 border-dashed rounded-xl m-4 cursor-pointer transition ${
-        false
-          ? 'border-gray-700 hover:bg-gray-800'
-          : 'border-gray-300 hover:bg-gray-50'
-      }`}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={handleDrop}
-      onClick={() => document.getElementById('pdf-upload')?.click()}
-    >
-      <input
-        id="pdf-upload"
-        type="file"
-        accept="application/pdf"
-        onChange={handleFileChange}
-        className="hidden"
-      />
-      <div className="bg-indigo-50 dark:bg-indigo-900/30 p-4 rounded-full mb-4">
-        <svg
-          className="w-10 h-10 text-indigo-500"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-          />
-        </svg>
+      {/* Main Viewer Area */}
+      <div className="flex-1 relative w-full h-full" ref={containerRef}>
+        {baseScale > 0 && pdfDoc && (
+          <TransformWrapper
+            minScale={1}
+            maxScale={5}
+            initialScale={1}
+            wheel={{ step: 0.15 }}
+            pinch={{ step: 5 }}
+            panning={{ velocityDisabled: true }}
+            doubleClick={{ mode: 'zoomIn' }}
+            disabled={annotationMode !== 'none'}
+          >
+            {({ zoomIn, zoomOut }) => (
+              <>
+                 <TransformComponent
+                   wrapperStyle={{ width: '100%', height: '100%', overflow: 'hidden' }}
+                   contentStyle={{ width: '100%', minHeight: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px 0', gap: '12px' }}
+                 >
+                    <PdfPageList 
+                       pdfDoc={pdfDoc} 
+                       numPages={numPages} 
+                       baseScale={baseScale} 
+                       firstPageRatio={firstPageRatio}
+                       annotationMode={annotationMode}
+                       drawColor={drawColor}
+                       annotations={annotations}
+                       updatePageAnnotations={updatePageAnnotations}
+                       onClick={(e: any) => {
+                          if(annotationMode === 'none') {
+                             setToolbarVisible(v => !v);
+                          }
+                       }}
+                    />
+                 </TransformComponent>
+                 
+                 {/* Floating Controls */}
+                 <div className={`absolute bottom-6 right-6 flex flex-col gap-3 transition-opacity duration-300 ${toolbarVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                   {annotationMode !== 'none' && (
+                      <div className="bg-rose-500 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg mb-2 text-center shadow-rose-500/20">
+                         Drawing Mode
+                      </div>
+                   )}
+                   <button onClick={(e) => { e.stopPropagation(); zoomIn(); }} className="w-12 h-12 bg-white dark:bg-slate-800 rounded-full shadow-lg flex items-center justify-center text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 border border-black/5 dark:border-white/5">
+                     <ZoomIn className="w-6 h-6" />
+                   </button>
+                   <button onClick={(e) => { e.stopPropagation(); zoomOut(); }} className="w-12 h-12 bg-white dark:bg-slate-800 rounded-full shadow-lg flex items-center justify-center text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 border border-black/5 dark:border-white/5">
+                     <ZoomOut className="w-6 h-6" />
+                   </button>
+                 </div>
+              </>
+            )}
+          </TransformWrapper>
+        )}
       </div>
-      <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-2">Upload PDF</h3>
-      <p className="text-gray-600 dark:text-gray-400 text-sm text-center">
-        Click or drag and drop a PDF file
-      </p>
-      <p className="text-gray-500 dark:text-gray-500 text-xs mt-3">
-        ⚡ Optimized for 500+ pages
-      </p>
     </div>
   );
 }
 
-export default ViewerTool;
+function PdfPageList({ pdfDoc, numPages, baseScale, firstPageRatio, annotationMode, drawColor, annotations, updatePageAnnotations, onClick }: any) {
+   const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set([1, 2, 3]));
+   
+   useEffect(() => {
+      let timeoutId: any;
+      const observer = new IntersectionObserver((entries) => {
+         clearTimeout(timeoutId);
+         timeoutId = setTimeout(() => {
+            setVisiblePages((prev) => {
+               const next = new Set(prev);
+               entries.forEach(entry => {
+                  const pageNum = Number(entry.target.getAttribute('data-page-num'));
+                  if (entry.isIntersecting) {
+                     next.add(pageNum);
+                     if (pageNum > 1) next.add(pageNum - 1);
+                     if (pageNum < numPages) next.add(pageNum + 1);
+                  } else {
+                     const firstVisible = Array.from(visiblePages)[0];
+                     const firstNum = firstVisible !== undefined ? firstVisible : 0;
+                     if (Math.abs(firstNum - pageNum) > 3) {
+                         next.delete(pageNum);
+                     }
+                  }
+               });
+               if (next.size === 0) next.add(1);
+               return next;
+            });
+         }, 100);
+      }, { rootMargin: '100% 0px 100% 0px', threshold: 0 });
+
+      const elements = document.querySelectorAll('.pdf-page-container');
+      elements.forEach(el => observer.observe(el));
+      return () => { observer.disconnect(); clearTimeout(timeoutId); };
+   }, [numPages, visiblePages]);
+
+   const pages = [];
+   for (let i = 1; i <= numPages; i++) {
+      pages.push(
+         <PdfPage 
+            key={i} 
+            pageNum={i} 
+            pdfDoc={pdfDoc} 
+            baseScale={baseScale} 
+            firstPageRatio={firstPageRatio} 
+            isVisible={visiblePages.has(i)}
+            annotationMode={annotationMode}
+            drawColor={drawColor}
+            pageAnnotations={annotations[i] || { highlights: [], strokes: [] }}
+            updatePageAnnotations={updatePageAnnotations}
+            onClick={onClick}
+         />
+      );
+   }
+
+   return <>{pages}</>;
+}
+
+function PdfPage({ pageNum, pdfDoc, baseScale, firstPageRatio, isVisible, annotationMode, drawColor, pageAnnotations, updatePageAnnotations, onClick }: any) {
+   const canvasRef = useRef<HTMLCanvasElement>(null);
+   const svgRef = useRef<SVGSVGElement>(null);
+   const [pageRatio, setPageRatio] = useState(firstPageRatio);
+   const [isRendered, setIsRendered] = useState(false);
+   const [textItems, setTextItems] = useState<any[]>([]);
+   const [pageViewport, setPageViewport] = useState<any>(null);
+   
+   const drawingActive = annotationMode === 'draw';
+   const isDrawing = useRef(false);
+   const currentStroke = useRef<Stroke | null>(null);
+   const [liveStroke, setLiveStroke] = useState<Stroke | null>(null);
+
+   useEffect(() => {
+      if (!isVisible) return;
+      let isActive = true;
+      const renderPage = async () => {
+         try {
+            const page = await pdfDoc.getPage(pageNum);
+            if (!isActive) return;
+
+            const viewport = page.getViewport({ scale: baseScale });
+            setPageViewport(viewport);
+            setPageRatio(viewport.width / viewport.height);
+
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = viewport.width * dpr;
+            canvas.height = viewport.height * dpr;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            const renderContext = { canvasContext: ctx, viewport };
+            await page.render(renderContext).promise;
+
+            if (isActive) {
+               setIsRendered(true);
+               const textContent = await page.getTextContent();
+               if(isActive) setTextItems(textContent.items);
+            }
+         } catch (e: any) {
+            console.error(`Error rendering page ${pageNum}:`, e);
+         }
+      };
+      if (!isRendered) renderPage();
+      return () => { isActive = false; };
+   }, [isVisible, pageNum, pdfDoc, baseScale, isRendered]);
+
+   const getRelativeCoordinates = (e: React.PointerEvent) => {
+      const svg = svgRef.current;
+      if (!svg) return { x: 0, y: 0 };
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX;
+      pt.y = e.clientY;
+      const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
+      return { x: svgP.x, y: svgP.y };
+   };
+
+   const handlePointerDown = (e: React.PointerEvent) => {
+      if (!drawingActive) return;
+      isDrawing.current = true;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      const coords = getRelativeCoordinates(e);
+      currentStroke.current = { points: [coords], color: drawColor, thickness: 3 };
+      setLiveStroke(currentStroke.current);
+   };
+
+   const handlePointerMove = (e: React.PointerEvent) => {
+      if (!isDrawing.current || !currentStroke.current) return;
+      const coords = getRelativeCoordinates(e);
+      // Optional: Check distance to avoid saving too many points 
+      // if (distance > 2)
+      currentStroke.current.points.push(coords);
+      setLiveStroke({ ...currentStroke.current }); // trigger render
+   };
+
+   const handlePointerUp = (e: React.PointerEvent) => {
+      if (!isDrawing.current || !currentStroke.current) return;
+      isDrawing.current = false;
+      e.currentTarget.releasePointerCapture(e.pointerId);
+      const finalStroke = { ...currentStroke.current };
+      updatePageAnnotations(pageNum, (prev: any) => ({
+         ...prev,
+         strokes: [...prev.strokes, finalStroke]
+      }));
+      currentStroke.current = null;
+      setLiveStroke(null);
+   };
+
+   return (
+      <div 
+         id={`pdf-page-${pageNum}`}
+         className="pdf-page-container shadow-md border border-black/5 dark:border-white/5 relative bg-white"
+         data-page-num={pageNum}
+         onClick={onClick}
+         style={{ 
+            width: '100%', 
+            maxWidth: '1200px', 
+            aspectRatio: String(pageRatio),
+            opacity: isVisible && isRendered ? 1 : 0.4,
+            transition: 'opacity 0.3s ease',
+            touchAction: annotationMode !== 'none' ? 'none' : 'auto'
+         }}
+      >
+         {/* Using block instead of absolute here ensures the page reserves DOM space naturally via aspect ratio */}
+         <canvas ref={canvasRef} className="w-full h-full block absolute inset-0 z-0" />
+         
+         {/* Native Text Selection Overlay */}
+         <div className="absolute inset-0 z-10 w-full h-full overflow-hidden" style={{ pointerEvents: annotationMode === 'none' ? 'auto' : 'none' }}>
+            {isRendered && pageViewport && textItems.map((item, id) => {
+               if (!item.str) return null;
+               const tx = item.transform;
+               // Extract real font height from transform matrix
+               const fontHeight = Math.sqrt((tx[2] * tx[2]) + (tx[3] * tx[3])) * baseScale;
+               const fontSize = fontHeight;
+               const left = tx[4] * baseScale;
+               const top = pageViewport.height - (tx[5] * baseScale) - fontSize;
+               
+               return (
+                  <span 
+                     key={id}
+                     style={{
+                        position: 'absolute',
+                        left: `${left}px`,
+                        top: `${top}px`,
+                        fontSize: `${fontSize}px`,
+                        color: 'transparent',
+                        cursor: 'text',
+                        whiteSpace: 'pre',
+                        transform: `scaleX(${tx[0] / fontHeight})`,
+                        transformOrigin: 'left bottom'
+                     }}
+                     className="selection:bg-indigo-300/40" 
+                  >
+                     {item.str}
+                  </span>
+               )
+            })}
+         </div>
+
+         {/* Annotations Layer (SVG) */}
+         <svg 
+            ref={svgRef}
+            className="absolute inset-0 z-20 w-full h-full" 
+            style={{ pointerEvents: annotationMode === 'draw' ? 'auto' : 'none' }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            // Add a viewBox matching the element's client size to mathematically map SVG coordinates, 
+            // but since it's 100% w/h, native getScreenCTM() perfectly maps client coordinates to inner SVG viewBox automatically.
+         >
+            {pageAnnotations.strokes.map((stroke: Stroke, idx: number) => {
+               const d = stroke.points.map((p, i) => `${i===0?'M':'L'} ${p.x} ${p.y}`).join(' ');
+               return <path key={idx} d={d} stroke={stroke.color} strokeWidth={stroke.thickness} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            })}
+            {/* Live drawing stroke */}
+            {liveStroke && liveStroke.points.length > 0 && (
+               <path 
+                  d={liveStroke.points.map((p, i) => `${i===0?'M':'L'} ${p.x} ${p.y}`).join(' ')} 
+                  stroke={liveStroke.color} 
+                  strokeWidth={liveStroke.thickness} 
+                  fill="none" 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round" 
+               />
+            )}
+         </svg>
+         
+         {!isRendered && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
+               <Loader2 className="w-8 h-8 animate-spin mb-3 text-indigo-400" />
+               <span className="text-sm font-semibold uppercase tracking-wider">Loading Page {pageNum}</span>
+            </div>
+         )}
+      </div>
+   );
+}

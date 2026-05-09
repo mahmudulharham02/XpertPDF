@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { UploadCloud, Scissors, CheckCircle2, FileUp, ListOrdered, FileOutput } from 'lucide-react';
 import { PDFDocument } from 'pdf-lib';
-import { downloadBlob } from '../../lib/utils';
+import { downloadBlob, sanitizePdfBytes } from '../../lib/utils';
 import * as pdfjsLib from 'pdfjs-dist';
 
 export function SplitTool() {
@@ -103,7 +103,7 @@ export function SplitTool() {
 
     try {
       const bytes = await file.arrayBuffer();
-      const pdf = await PDFDocument.load(bytes);
+      const pdf = await PDFDocument.load(sanitizePdfBytes(new Uint8Array(bytes)));
       const totalPages = pdf.getPageCount();
 
       if (splitMode === 'extract') {

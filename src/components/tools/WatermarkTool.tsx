@@ -4,6 +4,7 @@ import Draggable from 'react-draggable';
 import { UploadCloud, FileUp, Type, Image as ImageIcon, Settings2, Download, AlertCircle, Loader2 } from 'lucide-react';
 import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
+import { sanitizePdfBytes } from '../../lib/utils';
 
 // @ts-expect-error Vite handles this
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -146,7 +147,7 @@ function WatermarkToolInner() {
     setLoading(true);
 
     try {
-      const pdfDoc = await PDFDocument.load(pdfBytes);
+      const pdfDoc = await PDFDocument.load(sanitizePdfBytes(pdfBytes));
       const pages = pdfDoc.getPages();
 
       let imageToEmbed: any = null;
