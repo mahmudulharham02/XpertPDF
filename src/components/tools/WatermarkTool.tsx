@@ -4,7 +4,6 @@ import Draggable from 'react-draggable';
 import { UploadCloud, FileUp, Type, Image as ImageIcon, Settings2, Download, AlertCircle, Loader2 } from 'lucide-react';
 import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
-import { sanitizePdfBytes } from '../../lib/utils';
 
 // @ts-expect-error Vite handles this
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -58,7 +57,7 @@ function WatermarkToolInner() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [previewError, setPreviewError] = useState('');
   
-  const [watermarkPos, setWatermarkPos] = useState({ x: 0, y: 0 }); // Pixels relative to parent
+  const [watermarkPos, setWatermarkPos] = useState({ x: 0, y: 0 });
   const [pageRatio, setPageRatio] = useState(1);
   const containerRef = useRef<HTMLDivElement>(null);
   const draggableRef = useRef<HTMLDivElement>(null);
@@ -71,7 +70,7 @@ function WatermarkToolInner() {
          renderTaskRef.current.cancel();
       }
 
-      const page = await previewDoc.getPage(1); // Preview only first page
+      const page = await previewDoc.getPage(1);
       const viewport = page.getViewport({ scale: 1.5 });
       setPageRatio(viewport.width / viewport.height);
       const canvas = canvasRef.current;
@@ -92,7 +91,7 @@ function WatermarkToolInner() {
       
     } catch (e: any) {
       if (e.name !== 'RenderingCancelledException') {
-         console.error(e);
+         console.error('Preview render error:', e);
          setPreviewError('Could not process preview.');
       }
     }
@@ -108,6 +107,7 @@ function WatermarkToolInner() {
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
       const f = acceptedFiles[0];
+      
       if (f.size > 50 * 1024 * 1024) {
          setPreviewError("Warning: File is over 50MB and may be slow to process.");
       } else {
@@ -116,14 +116,45 @@ function WatermarkToolInner() {
 
       setFile(f);
       setFileName(f.name);
+      
       try {
+        console.log(`Loading PDF: ${f.name} (${f.size} bytes)`);
+        
         const arrayBuffer = await f.arrayBuffer();
-        setPdfBytes(new Uint8Array(arrayBuffer));
-        const pdf = await pdfjsLib.getDocument(new Uint8Array(arrayBuffer)).promise;
-        setPreviewDoc(pdf);
-      } catch (e) {
-        console.error(e);
-        setPreviewError('Failed to load PDF file.');
+        const uint8Array = new Uint8Array(arrayBuffer);
+        
+        const headerBytes = uint8Array.slice(0, 4);
+        const headerString = new TextDecoder().decode(headerBytes);
+        console.log(`PDF Header: "${headerString}"`);
+        
+        if (!headerString.startsWith('%PDF')) {
+          setPreviewError('Invalid PDF file. Not a valid PDF document.');
+          setFile(null);
+          return;
+        }
+
+        setPdfBytes(uint8Array);
+        console.log('PDF bytes stored successfully');
+        
+        try {
+          console.log('Loading with pdfjs...');
+          const pdfDoc = await pdfjsLib.getDocument({ 
+            data: uint8Array,
+            disableAutoFetch: false,
+            disableStream: false
+          }).promise;
+          console.log(`PDF loaded: ${pdfDoc.numPages} pages`);
+          setPreviewDoc(pdfDoc);
+        } catch (pdfError: any) {
+          console.error('pdfjs error:', pdfError);
+          setPreviewError(`Could not load PDF: ${pdfError.message}`);
+          setFile(null);
+        }
+        
+      } catch (e: any) {
+        console.error('File reading error:', e);
+        setPreviewError(`Error: ${e.message}`);
+        setFile(null);
       }
     }
   }, []);
@@ -142,86 +173,213 @@ function WatermarkToolInner() {
     }
   };
 
-  const handleApplyWatermark = async () => {
-    if (!pdfBytes) return;
-    setLoading(true);
-
-    try {
-      const pdfDoc = await PDFDocument.load(sanitizePdfBytes(pdfBytes));
-      const pages = pdfDoc.getPages();
-
-      let imageToEmbed: any = null;
-      let dims: { width: number, height: number } | null = null;
-
-      if (type === 'image' && imageFile) {
-        const imgBytes = await imageFile.arrayBuffer();
-        if (imageFile.type === 'image/png') {
-          imageToEmbed = await pdfDoc.embedPng(imgBytes);
-        } else if (imageFile.type === 'image/jpeg' || imageFile.type === 'image/jpg') {
-          imageToEmbed = await pdfDoc.embedJpg(imgBytes);
-        } else {
-           throw new Error("Unsupported image format. Use PNG or JPG.");
-        }
-        dims = imageToEmbed.scale((scale / 100) * 0.5); // scale down based on PDF units vs pixels
-      }
-
-      const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-      const fontSize = (120 * scale) / 100;
-
-      for (const page of pages) {
-        const { width, height } = page.getSize();
-        
-        let px = width / 2;
-        let py = height / 2;
-
-        if (containerRef.current) {
-           const rect = containerRef.current.getBoundingClientRect();
-           const normalizedX = (watermarkPos.x + rect.width / 2) / rect.width;
-           const normalizedY = (watermarkPos.y + rect.height / 2) / rect.height;
-           px = width * normalizedX;
-           py = height * (1 - normalizedY);
-        }
-
-        if (type === 'text' && text) {
-           const textWidth = font.widthOfTextAtSize(text, fontSize);
-           const textHeight = font.heightAtSize(fontSize);
-           
-           page.drawText(text, {
-             x: px - textWidth / 2,
-             y: py - textHeight / 2,
-             size: fontSize,
-             font: font,
-             color: rgb(0, 0, 0),
-             opacity: opacity / 100,
-             rotate: degrees(-rotation) 
-           });
-        } else if (type === 'image' && imageToEmbed && dims) {
-           page.drawImage(imageToEmbed, {
-             x: px - dims.width / 2,
-             y: py - dims.height / 2,
-             width: dims.width,
-             height: dims.height,
-             opacity: opacity / 100,
-             rotate: degrees(-rotation)
-           });
-        }
-      }
-
-      const watermarkedPdfBytes = await pdfDoc.save();
-      const blob = new Blob([watermarkedPdfBytes], { type: 'application/pdf' });
+  const downloadFile = (blob: Blob, filename: string) => {
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    
+    if (isMobile) {
       const url = URL.createObjectURL(blob);
-
-      const link = document.createElement("a");
+      const link = document.createElement('a');
       link.href = url;
-      link.download = fileName.replace('.pdf', '_watermarked.pdf');
+      link.target = '_blank';
+      link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } else {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
       URL.revokeObjectURL(url);
+    }
+  };
+
+  const handleApplyWatermark = async () => {
+    if (!pdfBytes || !previewDoc) {
+      setPreviewError('No PDF loaded');
+      return;
+    }
+    
+    setLoading(true);
+    setPreviewError('');
+
+    try {
+      const numPages = previewDoc.numPages;
+      console.log(`Processing ${numPages} pages...`);
+
+      // Try pdf-lib approach first
+      let success = false;
+      let watermarkedPdfBytes: Uint8Array | null = null;
+
+      try {
+        console.log('Attempting pdf-lib modification...');
+        
+        // Create a copy of the bytes
+        const pdfBytesCopy = new Uint8Array(pdfBytes);
+        
+        const pdfDoc = await PDFDocument.load(pdfBytesCopy, { 
+          ignoreEncryption: true,
+          updateMetadata: false
+        });
+        
+        const pages = pdfDoc.getPages();
+        console.log(`pdf-lib loaded: ${pages.length} pages`);
+
+        let imageToEmbed: any = null;
+        let dims: { width: number, height: number } | null = null;
+
+        if (type === 'image' && imageFile) {
+          const imgBytes = await imageFile.arrayBuffer();
+          if (imageFile.type === 'image/png') {
+            imageToEmbed = await pdfDoc.embedPng(imgBytes);
+          } else if (imageFile.type === 'image/jpeg' || imageFile.type === 'image/jpg') {
+            imageToEmbed = await pdfDoc.embedJpg(imgBytes);
+          }
+          if (imageToEmbed) {
+            dims = imageToEmbed.scale((scale / 100) * 0.5);
+          }
+        }
+
+        const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+        const fontSize = (120 * scale) / 100;
+
+        for (const page of pages) {
+          const { width, height } = page.getSize();
+          
+          let px = width / 2;
+          let py = height / 2;
+
+          if (containerRef.current) {
+             const rect = containerRef.current.getBoundingClientRect();
+             const normalizedX = (watermarkPos.x + rect.width / 2) / rect.width;
+             const normalizedY = (watermarkPos.y + rect.height / 2) / rect.height;
+             px = width * normalizedX;
+             py = height * (1 - normalizedY);
+          }
+
+          if (type === 'text' && text) {
+             const textWidth = font.widthOfTextAtSize(text, fontSize);
+             const textHeight = font.heightAtSize(fontSize);
+             
+             page.drawText(text, {
+               x: px - textWidth / 2,
+               y: py - textHeight / 2,
+               size: fontSize,
+               font: font,
+               color: rgb(0, 0, 0),
+               opacity: opacity / 100,
+               rotate: degrees(-rotation) 
+             });
+          } else if (type === 'image' && imageToEmbed && dims) {
+             page.drawImage(imageToEmbed, {
+               x: px - dims.width / 2,
+               y: py - dims.height / 2,
+               width: dims.width,
+               height: dims.height,
+               opacity: opacity / 100,
+               rotate: degrees(-rotation)
+             });
+          }
+        }
+
+        watermarkedPdfBytes = await pdfDoc.save();
+        success = true;
+        console.log('pdf-lib method succeeded');
+
+      } catch (pdfLibErr: any) {
+        console.error('pdf-lib failed:', pdfLibErr.message);
+        console.log('Trying canvas method as fallback...');
+
+        // Fallback: Use canvas to watermark
+        try {
+          const canvases: HTMLCanvasElement[] = [];
+
+          for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+            const page = await previewDoc.getPage(pageNum);
+            const viewport = page.getViewport({ scale: 2 });
+            
+            const canvas = document.createElement('canvas');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            
+            const ctx = canvas.getContext('2d');
+            if (!ctx) continue;
+
+            const renderContext = { canvasContext: ctx, viewport };
+            await page.render(renderContext as any).promise;
+
+            // Draw watermark on canvas
+            ctx.save();
+            ctx.globalAlpha = opacity / 100;
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.rotate((rotation * Math.PI) / 180);
+
+            if (type === 'text' && text) {
+              const fontSize = Math.round((120 * scale) / 100);
+              ctx.font = `bold ${fontSize}px Arial`;
+              ctx.fillStyle = 'black';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(text, 0, 0);
+            } else if (type === 'image' && imagePreviewUrl) {
+              const img = new Image();
+              img.src = imagePreviewUrl;
+              await new Promise((resolve) => {
+                img.onload = () => {
+                  const scaledWidth = img.width * (scale / 100);
+                  const scaledHeight = img.height * (scale / 100);
+                  ctx.drawImage(img, -scaledWidth / 2, -scaledHeight / 2, scaledWidth, scaledHeight);
+                  resolve(null);
+                };
+              });
+            }
+
+            ctx.restore();
+            canvases.push(canvas);
+          }
+
+          // Convert canvases to PDF
+          console.log('Converting canvas images to PDF...');
+          const pdfDoc = await PDFDocument.create();
+
+          for (const canvas of canvases) {
+            const imgData = canvas.toDataURL('image/png');
+            const imgBytes = await fetch(imgData).then(res => res.arrayBuffer());
+            const embeddedImg = await pdfDoc.embedPng(imgBytes);
+            
+            const page = pdfDoc.addPage([canvas.width / 2, canvas.height / 2]);
+            page.drawImage(embeddedImg, {
+              x: 0,
+              y: 0,
+              width: canvas.width / 2,
+              height: canvas.height / 2
+            });
+          }
+
+          watermarkedPdfBytes = await pdfDoc.save();
+          success = true;
+          console.log('Canvas fallback method succeeded');
+
+        } catch (canvasErr: any) {
+          console.error('Canvas method also failed:', canvasErr);
+          throw new Error(`Cannot process PDF: ${pdfLibErr.message}`);
+        }
+      }
+
+      if (success && watermarkedPdfBytes) {
+        const blob = new Blob([watermarkedPdfBytes], { type: 'application/pdf' });
+        const outputFilename = fileName.replace('.pdf', '_watermarked.pdf');
+        downloadFile(blob, outputFilename);
+        setPreviewError('');
+      }
+      
     } catch (e: any) {
-      console.error(e);
-      alert(e.message || "Failed to apply watermark");
+      console.error('Error:', e);
+      setPreviewError(`Error: ${e.message || 'Failed to process PDF'}`);
     } finally {
       setLoading(false);
     }
@@ -231,7 +389,6 @@ function WatermarkToolInner() {
     <div className="flex-1 flex flex-col pt-4 animate-in fade-in slide-in-from-bottom-4 duration-300 h-full w-full max-w-full">
       <div className="liquid-panel rounded-[24px] overflow-y-auto overflow-x-hidden flex flex-col flex-1 shadow-lg shadow-black/5 w-full">
         
-        {/* Top: Upload Area */}
         {previewError && (
               <div className="mx-6 mt-6 bg-rose-50 text-rose-600 p-4 rounded-xl text-sm font-bold border border-rose-100 flex items-center gap-2">
                 <AlertCircle className="w-5 h-5 shrink-0" />
@@ -274,11 +431,9 @@ function WatermarkToolInner() {
           )}
         </div>
 
-        {/* Bottom: Settings & Preview */}
         {file && (
           <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
             
-            {/* Sidebar Settings (Mobile stacked) */}
             <div className="w-full lg:w-80 border-r border-black/5 dark:border-white/10 p-4 sm:p-6 flex flex-col gap-6 overflow-y-auto shrink-0">
                <h3 className="font-bold text-slate-800 flex items-center gap-2">
                  <Settings2 className="w-5 h-5 text-indigo-500" /> Options
@@ -300,7 +455,7 @@ function WatermarkToolInner() {
                  </div>
                ) : (
                  <div className="flex flex-col gap-2">
-                   <label className="text-sm font-bold text-slate-700">Watermark Image (PNG/JPG)</label>
+                   <label className="text-sm font-bold text-slate-700">Watermark Image</label>
                    <input type="file" accept="image/png, image/jpeg" onChange={handleImageUpload} className="w-full bg-white border border-slate-200 rounded-lg p-2 min-h-[44px] text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
                  </div>
                )}
@@ -341,7 +496,6 @@ function WatermarkToolInner() {
                </div>
             </div>
 
-            {/* Preview Canvas Area */}
             <div className="flex-1 bg-slate-100 overflow-y-auto p-4 flex flex-col items-center justify-center relative min-h-[300px]">
                <div 
                  ref={containerRef}

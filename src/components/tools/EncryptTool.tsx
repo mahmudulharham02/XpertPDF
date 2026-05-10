@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { UploadCloud, FileUp, Lock, Unlock, CheckCircle2, AlertCircle } from 'lucide-react';
-import { downloadBlob } from '../../lib/utils';
+import { downloadBlob, sanitizePdfBytes } from '../../lib/utils';
 // @ts-ignore
 import { encryptPDF } from '@pdfsmaller/pdf-encrypt';
 // @ts-ignore
@@ -19,7 +19,7 @@ export function EncryptTool() {
 
   const checkEncryption = async (f: File) => {
     try {
-      const bytes = new Uint8Array(await f.arrayBuffer());
+      const bytes = sanitizePdfBytes(new Uint8Array(await f.arrayBuffer()));
       const info = await isEncrypted(bytes);
       if (info?.encrypted) {
          setEncryptionStatus(`Encrypted (${info.algorithm})`);
@@ -80,7 +80,7 @@ export function EncryptTool() {
      setSuccessMsg('');
 
      try {
-       const bytes = new Uint8Array(await file.arrayBuffer());
+       const bytes = sanitizePdfBytes(new Uint8Array(await file.arrayBuffer()));
        let processedBytes;
        let outName = file.name;
 
