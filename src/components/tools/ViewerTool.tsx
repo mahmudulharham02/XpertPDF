@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
+import { TransformWrapper, TransformComponent, useTransformContext, useTransformEffect } from 'react-zoom-pan-pinch';
 import { 
   Menu, X, ZoomIn, ZoomOut, Search, Settings, ArrowLeft, Loader2, PenTool, Download, Home
 } from 'lucide-react';
@@ -235,7 +235,7 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
             doubleClick={{ mode: 'zoomIn' }}
             disabled={annotationMode !== 'none'}
           >
-            {({ zoomIn, zoomOut }) => (
+            {({ zoomIn, zoomOut, setTransform, instance }) => (
               <>
                  <TransformComponent
                    wrapperStyle={{ width: '100%', height: '100%', overflow: 'hidden' }}
@@ -258,6 +258,8 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
                     />
                  </TransformComponent>
                  
+                  <FloatingScrollbar numPages={numPages} />
+                 
                  {/* Floating Controls */}
                  <div className={`absolute bottom-6 right-6 flex flex-col gap-3 transition-opacity duration-300 ${toolbarVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                    {annotationMode !== 'none' && (
@@ -279,6 +281,168 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
       </div>
     </div>
   );
+}
+
+function FloatingScrollbar({ numPages }: { numPages: number }) {
+   const { instance } = useTransformContext();
+   const containerRef = useRef<HTMLDivElement>(null);
+   const thumbRef = useRef<HTMLDivElement>(null);
+   const indicatorRef = useRef<HTMLDivElement>(null);
+   const hideTimeout = useRef<any>(null);
+   const isDragging = useRef(false);
+
+   const updateState = useCallback((state: any, inst: any) => {
+      if (!inst || !inst.wrapperComponent || !inst.contentComponent) return;
+      
+      const { scale, positionY } = state;
+      const wrapperHeight = inst.wrapperComponent.offsetHeight;
+      const contentHeight = inst.contentComponent.offsetHeight * scale;
+      const scrollable = contentHeight - wrapperHeight;
+      
+      if (scrollable <= 0) {
+         if (containerRef.current) {
+            containerRef.current.style.opacity = '0';
+            containerRef.current.style.pointerEvents = 'none';
+         }
+         return;
+      }
+      
+      const trackPadding = 16;
+      const trackHeight = containerRef.current ? containerRef.current.offsetHeight - trackPadding : wrapperHeight - trackPadding;
+      const minThumbHeight = 40;
+      const thumbHeight = Math.max((wrapperHeight / contentHeight) * trackHeight, minThumbHeight);
+      
+      const progress = Math.max(0, Math.min(-positionY / scrollable, 1));
+      const thumbY = progress * (trackHeight - thumbHeight) + (trackPadding / 2);
+      
+      if (thumbRef.current) {
+         thumbRef.current.style.height = `${thumbHeight}px`;
+         thumbRef.current.style.transform = `translateY(${thumbY}px)`;
+      }
+      
+      if (indicatorRef.current) {
+         const currentPage = Math.min(Math.max(Math.floor(progress * numPages) + 1, 1), numPages);
+         indicatorRef.current.textContent = `Page ${currentPage} / ${numPages}`;
+         
+         if (isDragging.current) {
+            indicatorRef.current.style.opacity = '1';
+            indicatorRef.current.style.transform = `translateY(${thumbY + thumbHeight/2 - 16}px)`;
+         } else {
+            indicatorRef.current.style.opacity = '0';
+         }
+      }
+   }, [numPages]);
+
+   const showScrollbar = useCallback(() => {
+      if (containerRef.current) {
+         containerRef.current.style.opacity = '1';
+         containerRef.current.style.pointerEvents = 'auto';
+      }
+      
+      if (hideTimeout.current) clearTimeout(hideTimeout.current);
+      hideTimeout.current = setTimeout(() => {
+         if (!isDragging.current && containerRef.current) {
+            containerRef.current.style.opacity = '0';
+            containerRef.current.style.pointerEvents = 'none';
+         }
+      }, 1500);
+   }, []);
+
+   useTransformEffect(({ state, instance: customInstance }) => {
+      if (!isDragging.current) {
+         showScrollbar();
+      }
+      updateState(state, customInstance || instance);
+   });
+
+   useEffect(() => {
+      if (instance && instance.transformState) {
+         updateState(instance.transformState, instance);
+      }
+      return () => {
+         if (hideTimeout.current) clearTimeout(hideTimeout.current);
+      };
+   }, [instance, updateState]);
+
+   const handlePointerDown = (e: React.PointerEvent) => {
+       if (!instance || !instance.transformState) return;
+       e.preventDefault();
+       e.stopPropagation();
+       e.currentTarget.setPointerCapture(e.pointerId);
+       
+       isDragging.current = true;
+       showScrollbar();
+       
+       const { scale, positionX, positionY } = instance.transformState;
+       const wrapperHeight = instance.wrapperComponent.offsetHeight;
+       const contentHeight = instance.contentComponent.offsetHeight * scale;
+       let scrollable = contentHeight - wrapperHeight;
+       if (scrollable <= 0) scrollable = 1;
+       
+       const trackPadding = 16;
+       const trackHeight = containerRef.current!.offsetHeight - trackPadding;
+       let thumbHeight = Math.max((wrapperHeight / contentHeight) * trackHeight, 40);
+       
+       const rect = containerRef.current!.getBoundingClientRect();
+       const currentThumbY = (-positionY / scrollable) * (trackHeight - thumbHeight) + (trackPadding / 2);
+       
+       const clickYInContainer = e.clientY - rect.top;
+       let grabOffsetY = thumbHeight / 2;
+       
+       // If click was inside the thumb bounds, offset relative to thumb
+       if (clickYInContainer >= currentThumbY && clickYInContainer <= currentThumbY + thumbHeight) {
+           grabOffsetY = clickYInContainer - currentThumbY;
+       }
+
+       const handleMove = (moveEvent: PointerEvent) => {
+          showScrollbar();
+          const y = moveEvent.clientY - rect.top - (trackPadding / 2);
+          let progress = (y - grabOffsetY) / (trackHeight - thumbHeight);
+          progress = Math.max(0, Math.min(progress, 1));
+          
+          const newPositionY = -(progress * scrollable);
+          instance.setTransform(positionX, newPositionY, scale, 0);
+          updateState({ scale, positionX, positionY: newPositionY }, instance);
+       };
+       
+       const handleUp = (upEvent: PointerEvent) => {
+          isDragging.current = false;
+          if (containerRef.current) containerRef.current.releasePointerCapture(upEvent.pointerId);
+          if (indicatorRef.current) indicatorRef.current.style.opacity = '0';
+          
+          window.removeEventListener('pointermove', handleMove);
+          window.removeEventListener('pointerup', handleUp);
+          showScrollbar();
+       };
+       
+       window.addEventListener('pointermove', handleMove);
+       window.addEventListener('pointerup', handleUp);
+       
+       // Force initial jump if clicked on track
+       handleMove(e as any);
+   };
+
+   return (
+      <div 
+         ref={containerRef}
+         className="absolute right-0 top-0 bottom-0 w-8 z-50 transition-opacity duration-300 flex justify-center py-2 pointer-events-none"
+         style={{ opacity: 0, touchAction: 'none' }}
+         onPointerDown={handlePointerDown}
+      >
+         <div 
+            ref={thumbRef}
+            className="absolute top-0 right-0 w-8 flex justify-end pr-1.5 cursor-grab active:cursor-grabbing transition-transform duration-75"
+            style={{ touchAction: 'none' }}
+         >
+             <div className="w-1.5 sm:w-2 h-full bg-black/50 dark:bg-white/50 hover:bg-black/70 dark:hover:bg-white/70 rounded-full backdrop-blur-md shadow-sm box-border" />
+         </div>
+         <div 
+            ref={indicatorRef}
+            className="absolute right-12 bg-black/80 dark:bg-white/90 text-white dark:text-black px-3 py-1.5 rounded-full text-xs font-bold font-mono transition-opacity duration-200 shadow-xl pointer-events-none whitespace-nowrap"
+            style={{ opacity: 0 }}
+         />
+      </div>
+   );
 }
 
 function PdfPageList({ pdfDoc, numPages, baseScale, firstPageRatio, annotationMode, drawColor, annotations, updatePageAnnotations, onClick }: any) {
