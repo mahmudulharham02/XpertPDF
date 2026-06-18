@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { TransformWrapper, TransformComponent, useTransformContext, useTransformEffect } from 'react-zoom-pan-pinch';
 import { 
-  Menu, X, ZoomIn, ZoomOut, Search, Settings, ArrowLeft, Loader2, PenTool, Download, Home
+  Menu, X, ZoomIn, ZoomOut, Search, Settings, ArrowLeft, Loader2, PenTool, Download, Home, ChevronLeft, ChevronRight
 } from 'lucide-react';
 
 // @ts-expect-error Vite handles this
@@ -33,6 +33,7 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
   const [error, setError] = useState('');
   
   const [numPages, setNumPages] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
   const [firstPageRatio, setFirstPageRatio] = useState(1.414);
   const [baseScale, setBaseScale] = useState(1);
   const [toolbarVisible, setToolbarVisible] = useState(true);
@@ -45,10 +46,65 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
   const [annotations, setAnnotations] = useState<Record<number, Annotations>>({});
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const transformRef = useRef<any>(null);
 
   useEffect(() => {
     if (onPdfOpen) onPdfOpen(!!pdfFile);
   }, [pdfFile, onPdfOpen]);
+
+  const closeDocument = useCallback(async () => {
+    if (pdfDoc) {
+      try {
+        await pdfDoc.destroy();
+      } catch (e) {
+        console.error("Error destroying PDF document:", e);
+      }
+    }
+    setPdfDoc(null);
+    setPdfFile(null);
+    setNumPages(0);
+    setAnnotations({});
+    setCurrentPage(1);
+  }, [pdfDoc]);
+
+  useEffect(() => {
+     return () => {
+        if (pdfDoc) {
+           pdfDoc.destroy().catch(err => console.error("Unmount cleanup error:", err));
+        }
+     };
+  }, [pdfDoc]);
+
+  const scrollToPage = useCallback((pageNum: number) => {
+     if (pageNum < 1 || pageNum > numPages) return;
+     const parent = transformRef.current;
+     if (!parent) return;
+     const inst = parent.instance;
+     if (!inst || !inst.contentComponent) return;
+     
+     const pageEl = document.getElementById(`pdf-page-${pageNum}`);
+     if (!pageEl) return;
+     
+     const contentRect = inst.contentComponent.getBoundingClientRect();
+     const pageRect = pageEl.getBoundingClientRect();
+     const tState = inst.state || inst.transformState || {};
+     const scale = tState.scale || 1;
+     const positionX = tState.positionX || 0;
+     const pageOffsetTop = (pageRect.top - contentRect.top) / scale;
+     
+     const newPositionY = -(pageOffsetTop * scale) + 16;
+     
+     const wrapperHeight = inst.wrapperComponent.offsetHeight;
+     const contentHeight = inst.contentComponent.offsetHeight * scale;
+     const scrollable = contentHeight - wrapperHeight;
+     const clampedY = Math.max(-scrollable, Math.min(newPositionY, 0));
+     
+     const setTransformFunc = parent.setTransform || inst.setTransform;
+     if (typeof setTransformFunc === 'function') {
+        setTransformFunc(positionX, clampedY, scale, 300);
+     }
+     setCurrentPage(pageNum);
+  }, [numPages]);
 
   const loadPdf = async (file: File) => {
     setLoading(true); setError('');
@@ -158,7 +214,7 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
                <button onClick={() => setAnnotationMode(m => m === 'draw' ? 'none' : 'draw')} className={`p-2 rounded-xl text-sm font-bold transition-colors ${annotationMode === 'draw' ? 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400' : 'hover:bg-black/5'}`}>
                   <PenTool className="w-4 h-4 sm:w-5 sm:h-5" />
                </button>
-               <button onClick={() => { setPdfFile(null); setPdfDoc(null); }} className="px-3 py-1.5 ml-2 text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors border border-black/5 dark:border-white/5 shadow-sm">
+               <button onClick={closeDocument} className="px-3 py-1.5 ml-2 text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors border border-black/5 dark:border-white/5 shadow-sm">
                   Close
                </button>
             </div>
@@ -184,7 +240,7 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
                <button onClick={handleDownload} className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 text-sm font-medium border border-slate-200 dark:border-slate-800">
                   <span className="flex items-center gap-2"><Download className="w-4 h-4 text-indigo-500" /> Save Original</span>
                </button>
-               <button onClick={() => { setPdfFile(null); setPdfDoc(null); setSidebarOpen(false); if(onBack) onBack(); }} className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 text-sm font-medium border border-slate-200 dark:border-slate-800">
+               <button onClick={async () => { await closeDocument(); setSidebarOpen(false); if(onBack) onBack(); }} className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 text-sm font-medium border border-slate-200 dark:border-slate-800">
                   <span className="flex items-center gap-2"><Home className="w-4 h-4 text-emerald-500" /> Convert Tools Home</span>
                </button>
             </div>
@@ -210,8 +266,7 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
                <div className="grid grid-cols-4 gap-2">
                   {Array.from({ length: numPages }).map((_, i) => (
                      <button key={i} onClick={() => {
-                        const el = document.getElementById(`pdf-page-${i+1}`);
-                        if (el) el.scrollIntoView({ behavior: 'smooth' });
+                        scrollToPage(i + 1);
                         setSidebarOpen(false);
                      }} className="aspect-square flex flex-col items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-bold border border-black/5 dark:border-white/5">
                         {i + 1}
@@ -226,6 +281,7 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
       <div className="flex-1 relative w-full h-full" ref={containerRef}>
         {baseScale > 0 && pdfDoc && (
           <TransformWrapper
+            ref={transformRef}
             minScale={1}
             maxScale={5}
             initialScale={1}
@@ -248,7 +304,7 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
                        firstPageRatio={firstPageRatio}
                        annotationMode={annotationMode}
                        drawColor={drawColor}
-                       annotations={annotations}
+                       annotations={annotations} currentPage={currentPage}
                        updatePageAnnotations={updatePageAnnotations}
                        onClick={(e: any) => {
                           if(annotationMode === 'none') {
@@ -258,9 +314,45 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
                     />
                  </TransformComponent>
                  
-                  <FloatingScrollbar numPages={numPages} />
+                  <FloatingScrollbar numPages={numPages} currentPage={currentPage} setCurrentPage={setCurrentPage} />
+
+                  {/* Floating Page Navigation Deck */}
+                  <div className={`absolute bottom-6 left-1/2 -translate-x-1/2 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-black/10 dark:border-white/10 shadow-2xl rounded-full px-3 py-1.5 flex items-center gap-3 transition-all duration-300 ${toolbarVisible ? 'opacity-100' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+                     <button 
+                        disabled={currentPage <= 1} 
+                        onClick={(e) => { e.stopPropagation(); scrollToPage(currentPage - 1); }} 
+                        className="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-35 disabled:pointer-events-none text-slate-700 dark:text-slate-300 transition-colors"
+                     >
+                        <ChevronLeft className="w-5 h-5" />
+                     </button>
+                     <div className="flex items-center gap-1 text-sm font-semibold text-slate-800 dark:text-slate-200">
+                        <span>Page</span>
+                        <input 
+                           type="number" 
+                           min={1} 
+                           max={numPages} 
+                           value={currentPage} 
+                           onChange={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              if (val >= 1 && val <= numPages) {
+                                 scrollToPage(val);
+                              }
+                           }}
+                           className="w-10 text-center bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 rounded px-1 py-0.5 text-xs font-bold leading-none select-all" 
+                        />
+                        <span className="text-slate-400 dark:text-slate-500 font-normal">/</span>
+                        <span>{numPages}</span>
+                     </div>
+                     <button 
+                        disabled={currentPage >= numPages} 
+                        onClick={(e) => { e.stopPropagation(); scrollToPage(currentPage + 1); }} 
+                        className="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-35 disabled:pointer-events-none text-slate-700 dark:text-slate-300 transition-colors"
+                     >
+                        <ChevronRight className="w-5 h-5" />
+                     </button>
+                  </div>
                  
-                 {/* Floating Controls */}
+                  {/* Floating Controls */}
                  <div className={`absolute bottom-6 right-6 flex flex-col gap-3 transition-opacity duration-300 ${toolbarVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                    {annotationMode !== 'none' && (
                       <div className="bg-rose-500 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg mb-2 text-center shadow-rose-500/20">
@@ -283,8 +375,34 @@ export function ViewerTool({ onPdfOpen, onBack }: ViewerToolProps) {
   );
 }
 
-function FloatingScrollbar({ numPages }: { numPages: number }) {
-   const { instance } = useTransformContext();
+function getActivePage(inst: any, numPages: number): number {
+   if (!inst || !inst.wrapperComponent) return 1;
+   const wrapperEl = inst.wrapperComponent;
+   const wrapperRect = wrapperEl.getBoundingClientRect();
+   const viewportCenter = wrapperRect.top + wrapperRect.height / 2;
+   
+   let closestPage = 1;
+   let minDistance = Infinity;
+   
+   for (let i = 1; i <= numPages; i++) {
+      const pageEl = document.getElementById(`pdf-page-${i}`);
+      if (pageEl) {
+         const rect = pageEl.getBoundingClientRect();
+         if (rect.top <= viewportCenter && rect.bottom >= viewportCenter) {
+            return i;
+         }
+         const distance = Math.abs((rect.top + rect.bottom) / 2 - viewportCenter);
+         if (distance < minDistance) {
+            minDistance = distance;
+            closestPage = i;
+         }
+      }
+   }
+   return closestPage;
+}
+
+function FloatingScrollbar({ numPages, currentPage, setCurrentPage }: { numPages: number, currentPage: number, setCurrentPage: (p: number) => void }) {
+   const { instance } = useTransformContext() as any;
    const containerRef = useRef<HTMLDivElement>(null);
    const thumbRef = useRef<HTMLDivElement>(null);
    const indicatorRef = useRef<HTMLDivElement>(null);
@@ -321,22 +439,34 @@ function FloatingScrollbar({ numPages }: { numPages: number }) {
       }
       
       if (indicatorRef.current) {
-         const currentPage = Math.min(Math.max(Math.floor(progress * numPages) + 1, 1), numPages);
-         indicatorRef.current.textContent = `Page ${currentPage} / ${numPages}`;
+         let page = Math.min(Math.max(Math.floor(progress * numPages) + 1, 1), numPages);
          
-         if (isDragging.current) {
+         if (!isDragging.current) {
+            page = getActivePage(inst, numPages);
+         }
+         
+         indicatorRef.current.textContent = `Page ${page} / ${numPages}`;
+         indicatorRef.current.style.transform = `translateY(${thumbY + thumbHeight/2 - 16}px)`;
+         
+         if (page !== currentPage) {
+            setCurrentPage(page);
+         }
+         
+         if (isDragging.current || (containerRef.current && containerRef.current.style.opacity === '1')) {
             indicatorRef.current.style.opacity = '1';
-            indicatorRef.current.style.transform = `translateY(${thumbY + thumbHeight/2 - 16}px)`;
          } else {
             indicatorRef.current.style.opacity = '0';
          }
       }
-   }, [numPages]);
+   }, [numPages, currentPage, setCurrentPage]);
 
    const showScrollbar = useCallback(() => {
       if (containerRef.current) {
          containerRef.current.style.opacity = '1';
          containerRef.current.style.pointerEvents = 'auto';
+      }
+      if (indicatorRef.current) {
+         indicatorRef.current.style.opacity = '1';
       }
       
       if (hideTimeout.current) clearTimeout(hideTimeout.current);
@@ -344,6 +474,9 @@ function FloatingScrollbar({ numPages }: { numPages: number }) {
          if (!isDragging.current && containerRef.current) {
             containerRef.current.style.opacity = '0';
             containerRef.current.style.pointerEvents = 'none';
+         }
+         if (!isDragging.current && indicatorRef.current) {
+            indicatorRef.current.style.opacity = '0';
          }
       }, 1500);
    }, []);
@@ -356,8 +489,9 @@ function FloatingScrollbar({ numPages }: { numPages: number }) {
    });
 
    useEffect(() => {
-      if (instance && instance.transformState) {
-         updateState(instance.transformState, instance);
+      if (instance && (instance.state || instance.transformState)) {
+         const transformState = instance ? (instance.state || instance.transformState) : null;
+         if (transformState) updateState(transformState, instance);
       }
       return () => {
          if (hideTimeout.current) clearTimeout(hideTimeout.current);
@@ -365,7 +499,8 @@ function FloatingScrollbar({ numPages }: { numPages: number }) {
    }, [instance, updateState]);
 
    const handlePointerDown = (e: React.PointerEvent) => {
-       if (!instance || !instance.transformState) return;
+       const transformState = instance ? (instance.state || instance.transformState) : null;
+       if (!instance || !transformState) return;
        e.preventDefault();
        e.stopPropagation();
        e.currentTarget.setPointerCapture(e.pointerId);
@@ -373,7 +508,7 @@ function FloatingScrollbar({ numPages }: { numPages: number }) {
        isDragging.current = true;
        showScrollbar();
        
-       const { scale, positionX, positionY } = instance.transformState;
+       const { scale = 1, positionX = 0, positionY = 0 } = transformState;
        const wrapperHeight = instance.wrapperComponent.offsetHeight;
        const contentHeight = instance.contentComponent.offsetHeight * scale;
        let scrollable = contentHeight - wrapperHeight;
@@ -445,40 +580,102 @@ function FloatingScrollbar({ numPages }: { numPages: number }) {
    );
 }
 
-function PdfPageList({ pdfDoc, numPages, baseScale, firstPageRatio, annotationMode, drawColor, annotations, updatePageAnnotations, onClick }: any) {
-   const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set([1, 2, 3]));
+function PdfPageList({ pdfDoc, numPages, baseScale, firstPageRatio, annotationMode, drawColor, annotations, updatePageAnnotations, currentPage, onClick }: any) {
+   const [currentlyVisiblePages, setCurrentlyVisiblePages] = useState<Set<number>>(new Set([currentPage || 1]));
    
    useEffect(() => {
       let timeoutId: any;
       const observer = new IntersectionObserver((entries) => {
          clearTimeout(timeoutId);
          timeoutId = setTimeout(() => {
-            setVisiblePages((prev) => {
+            setCurrentlyVisiblePages((prev) => {
                const next = new Set(prev);
                entries.forEach(entry => {
                   const pageNum = Number(entry.target.getAttribute('data-page-num'));
                   if (entry.isIntersecting) {
                      next.add(pageNum);
-                     if (pageNum > 1) next.add(pageNum - 1);
-                     if (pageNum < numPages) next.add(pageNum + 1);
                   } else {
-                     const firstVisible = Array.from(visiblePages)[0];
-                     const firstNum = firstVisible !== undefined ? firstVisible : 0;
-                     if (Math.abs(firstNum - pageNum) > 3) {
-                         next.delete(pageNum);
-                     }
+                     next.delete(pageNum);
                   }
                });
-               if (next.size === 0) next.add(1);
+               if (next.size === 0 && currentPage) {
+                  next.add(currentPage);
+               }
                return next;
             });
-         }, 100);
-      }, { rootMargin: '100% 0px 100% 0px', threshold: 0 });
+         }, 80);
+      }, { rootMargin: '20% 0px 20% 0px', threshold: 0.01 });
 
       const elements = document.querySelectorAll('.pdf-page-container');
       elements.forEach(el => observer.observe(el));
-      return () => { observer.disconnect(); clearTimeout(timeoutId); };
-   }, [numPages, visiblePages]);
+      return () => { 
+         observer.disconnect(); 
+         clearTimeout(timeoutId); 
+      };
+   }, [numPages, currentPage]);
+
+   const renderSet = React.useMemo(() => {
+      const set = new Set<number>();
+      
+      // 1. Add directly visible pages
+      currentlyVisiblePages.forEach(p => {
+         if (p >= 1 && p <= numPages) set.add(p);
+      });
+      
+      // 2. Add current anchor page
+      if (currentPage >= 1 && currentPage <= numPages) {
+         set.add(currentPage);
+      }
+      
+      // 3. Add 3-page prefetch buffer (around the visible range)
+      const visibleArray = Array.from(currentlyVisiblePages).map(Number);
+      const minP = Math.min(...visibleArray, currentPage || 1);
+      const maxP = Math.max(...visibleArray, currentPage || 1);
+      
+      for (let i = Math.max(1, minP - 3); i <= Math.min(numPages, maxP + 3); i++) {
+         set.add(i);
+      }
+      
+      return set;
+   }, [currentlyVisiblePages, currentPage, numPages]);
+
+   const activeQueueRef = useRef<{
+      queue: { pageNum: number; priority: number; render: () => Promise<void> }[];
+      activeCount: number;
+      process: () => void;
+      enqueue: (pageNum: number, priority: number, render: () => Promise<void>) => () => void;
+   }>({
+      queue: [],
+      activeCount: 0,
+      process() {
+         if (this.activeCount >= 1 || this.queue.length === 0) return;
+         this.queue.sort((a, b) => b.priority - a.priority);
+         const next = this.queue.shift();
+         if (!next) return;
+         this.activeCount++;
+         next.render().catch(err => {
+            console.error("Queue process task failed:", err);
+         }).finally(() => {
+            this.activeCount--;
+            this.process();
+         });
+      },
+      enqueue(pageNum, priority, render) {
+         this.queue = this.queue.filter(q => q.pageNum !== pageNum);
+         const task = { pageNum, priority, render };
+         this.queue.push(task);
+         setTimeout(() => {
+            this.process();
+         }, 30);
+         return () => {
+            this.queue = this.queue.filter(q => q !== task);
+         };
+      }
+   });
+
+   const enqueueRender = useCallback((pageNum: number, priority: number, render: () => Promise<void>) => {
+      return activeQueueRef.current.enqueue(pageNum, priority, render);
+   }, []);
 
    const pages = [];
    for (let i = 1; i <= numPages; i++) {
@@ -489,7 +686,9 @@ function PdfPageList({ pdfDoc, numPages, baseScale, firstPageRatio, annotationMo
             pdfDoc={pdfDoc} 
             baseScale={baseScale} 
             firstPageRatio={firstPageRatio} 
-            isVisible={visiblePages.has(i)}
+            isVisible={renderSet.has(i)}
+            isDirectlyVisible={currentlyVisiblePages.has(i)}
+            enqueueRender={enqueueRender}
             annotationMode={annotationMode}
             drawColor={drawColor}
             pageAnnotations={annotations[i] || { highlights: [], strokes: [] }}
@@ -502,7 +701,7 @@ function PdfPageList({ pdfDoc, numPages, baseScale, firstPageRatio, annotationMo
    return <>{pages}</>;
 }
 
-function PdfPage({ pageNum, pdfDoc, baseScale, firstPageRatio, isVisible, annotationMode, drawColor, pageAnnotations, updatePageAnnotations, onClick }: any) {
+function PdfPage({ pageNum, pdfDoc, baseScale, firstPageRatio, isVisible, isDirectlyVisible, enqueueRender, annotationMode, drawColor, pageAnnotations, updatePageAnnotations, onClick }: any) {
    const canvasRef = useRef<HTMLCanvasElement>(null);
    const svgRef = useRef<SVGSVGElement>(null);
    const [pageRatio, setPageRatio] = useState(firstPageRatio);
@@ -516,14 +715,34 @@ function PdfPage({ pageNum, pdfDoc, baseScale, firstPageRatio, isVisible, annota
    const [liveStroke, setLiveStroke] = useState<Stroke | null>(null);
 
    useEffect(() => {
-      if (!isVisible) return;
+      if (!isVisible) {
+         // Virtualization & Memory Cleanup
+         setIsRendered(false);
+         setTextItems([]);
+         setPageViewport(null);
+         const canvas = canvasRef.current;
+         if (canvas) {
+            canvas.width = 0;
+            canvas.height = 0;
+            const ctx = canvas.getContext('2d');
+            if (ctx) ctx.clearRect(0, 0, 0, 0);
+         }
+         return;
+      }
+
+      if (isRendered) return;
+
       let isActive = true;
-      const renderPage = async () => {
+      const priority = isDirectlyVisible ? 2 : 1;
+
+      const renderPageTask = async () => {
          try {
             const page = await pdfDoc.getPage(pageNum);
             if (!isActive) return;
 
             const viewport = page.getViewport({ scale: baseScale });
+            if (!isActive) return;
+
             setPageViewport(viewport);
             setPageRatio(viewport.width / viewport.height);
 
@@ -532,7 +751,8 @@ function PdfPage({ pageNum, pdfDoc, baseScale, firstPageRatio, isVisible, annota
             const ctx = canvas.getContext('2d');
             if (!ctx) return;
 
-            const dpr = window.devicePixelRatio || 1;
+            // Mobile memory safeguard & high performance
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
             canvas.width = viewport.width * dpr;
             canvas.height = viewport.height * dpr;
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -543,15 +763,20 @@ function PdfPage({ pageNum, pdfDoc, baseScale, firstPageRatio, isVisible, annota
             if (isActive) {
                setIsRendered(true);
                const textContent = await page.getTextContent();
-               if(isActive) setTextItems(textContent.items);
+               if (isActive) setTextItems(textContent.items);
             }
          } catch (e: any) {
             console.error(`Error rendering page ${pageNum}:`, e);
          }
       };
-      if (!isRendered) renderPage();
-      return () => { isActive = false; };
-   }, [isVisible, pageNum, pdfDoc, baseScale, isRendered]);
+
+      const dequeue = enqueueRender(pageNum, priority, renderPageTask);
+
+      return () => {
+         isActive = false;
+         dequeue();
+      };
+   }, [isVisible, isDirectlyVisible, pageNum, pdfDoc, baseScale, isRendered, enqueueRender]);
 
    const getRelativeCoordinates = (e: React.PointerEvent) => {
       const svg = svgRef.current;
@@ -575,10 +800,8 @@ function PdfPage({ pageNum, pdfDoc, baseScale, firstPageRatio, isVisible, annota
    const handlePointerMove = (e: React.PointerEvent) => {
       if (!isDrawing.current || !currentStroke.current) return;
       const coords = getRelativeCoordinates(e);
-      // Optional: Check distance to avoid saving too many points 
-      // if (distance > 2)
       currentStroke.current.points.push(coords);
-      setLiveStroke({ ...currentStroke.current }); // trigger render
+      setLiveStroke({ ...currentStroke.current });
    };
 
    const handlePointerUp = (e: React.PointerEvent) => {
@@ -609,15 +832,12 @@ function PdfPage({ pageNum, pdfDoc, baseScale, firstPageRatio, isVisible, annota
             touchAction: annotationMode !== 'none' ? 'none' : 'auto'
          }}
       >
-         {/* Using block instead of absolute here ensures the page reserves DOM space naturally via aspect ratio */}
          <canvas ref={canvasRef} className="w-full h-full block absolute inset-0 z-0" />
          
-         {/* Native Text Selection Overlay */}
          <div className="absolute inset-0 z-10 w-full h-full overflow-hidden" style={{ pointerEvents: annotationMode === 'none' ? 'auto' : 'none' }}>
             {isRendered && pageViewport && textItems.map((item, id) => {
                if (!item.str) return null;
                const tx = item.transform;
-               // Extract real font height from transform matrix
                const fontHeight = Math.sqrt((tx[2] * tx[2]) + (tx[3] * tx[3])) * baseScale;
                const fontSize = fontHeight;
                const left = tx[4] * baseScale;
@@ -645,7 +865,6 @@ function PdfPage({ pageNum, pdfDoc, baseScale, firstPageRatio, isVisible, annota
             })}
          </div>
 
-         {/* Annotations Layer (SVG) */}
          <svg 
             ref={svgRef}
             className="absolute inset-0 z-20 w-full h-full" 
@@ -654,14 +873,11 @@ function PdfPage({ pageNum, pdfDoc, baseScale, firstPageRatio, isVisible, annota
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
-            // Add a viewBox matching the element's client size to mathematically map SVG coordinates, 
-            // but since it's 100% w/h, native getScreenCTM() perfectly maps client coordinates to inner SVG viewBox automatically.
          >
             {pageAnnotations.strokes.map((stroke: Stroke, idx: number) => {
                const d = stroke.points.map((p, i) => `${i===0?'M':'L'} ${p.x} ${p.y}`).join(' ');
                return <path key={idx} d={d} stroke={stroke.color} strokeWidth={stroke.thickness} fill="none" strokeLinecap="round" strokeLinejoin="round" />
             })}
-            {/* Live drawing stroke */}
             {liveStroke && liveStroke.points.length > 0 && (
                <path 
                   d={liveStroke.points.map((p, i) => `${i===0?'M':'L'} ${p.x} ${p.y}`).join(' ')} 
@@ -674,7 +890,7 @@ function PdfPage({ pageNum, pdfDoc, baseScale, firstPageRatio, isVisible, annota
             )}
          </svg>
          
-         {!isRendered && (
+         {(!isRendered || !isVisible) && (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
                <Loader2 className="w-8 h-8 animate-spin mb-3 text-indigo-400" />
                <span className="text-sm font-semibold uppercase tracking-wider">Loading Page {pageNum}</span>
