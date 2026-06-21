@@ -1,0 +1,46 @@
+name: XpertPDF Automated APK Generator
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: # Adds the manual "Run workflow" button
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Java Development Kit (JDK 17)
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v3
+
+    # Ensures permissions are correct if a gradle wrapper exists at root
+    - name: Grant Execute Permission to Gradle
+      run: chmod +x ./gradlew
+      continue-on-error: true
+
+    # Compiles the app straight from the repository root
+    - name: Build Release APK
+      run: |
+        if [ -f ./gradlew ]; then
+          ./gradlew assembleRelease
+        else
+          gradle assembleRelease
+        fi
+      env:
+        GITHUB_RUN_NUMBER: ${{ github.run_number }}
+
+    # Grabs the freshly compiled APK and delivers it to your dashboard
+    - name: Upload Finished APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: XpertPDF-Build-${{ github.run_number }}
+        path: app/build/outputs/apk/release/*-unsigned.apk
