@@ -1,8 +1,0 @@
-{
-  "name": "XpertPDF",
-  "description": "Advanced PDF and image processing tool for OCR, extraction, merging, and signing.",
-  "requestFramePermissions": [
-    "camera"
-  ],
-  "majorCapabilities": []
-}
