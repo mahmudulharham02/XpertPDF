@@ -3,7 +3,7 @@ name: XpertPDF Automated APK Generator
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch: # Adds the manual "Run workflow" button
+  workflow_dispatch: 
 
 jobs:
   build:
@@ -19,26 +19,24 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Set up Gradle
-      uses: gradle/actions/setup-gradle@v3
+    # Dynamically injects a fresh Gradle wrapper so the build cannot fail from a missing gradlew file
+    - name: Validate or Generate Gradle Wrapper
+      run: |
+        if [ ! -f ./gradlew ]; then
+          echo "Gradle wrapper missing. Generating a fresh one..."
+          gradle wrapper --gradle-version 8.2
+        fi
+        chmod +x ./gradlew
 
-    # Ensures permissions are correct if a gradle wrapper exists at root
-    - name: Grant Execute Permission to Gradle
-      run: chmod +x ./gradlew
-      continue-on-error: true
+    - name: Set up Gradle Cache
+      uses: gradle/actions/setup-gradle@v3
 
     # Compiles the app straight from the repository root
     - name: Build Release APK
-      run: |
-        if [ -f ./gradlew ]; then
-          ./gradlew assembleRelease
-        else
-          gradle assembleRelease
-        fi
+      run: ./gradlew assembleRelease
       env:
         GITHUB_RUN_NUMBER: ${{ github.run_number }}
 
-    # Grabs the freshly compiled APK and delivers it to your dashboard
     - name: Upload Finished APK Artifact
       uses: actions/upload-artifact@v4
       with:
