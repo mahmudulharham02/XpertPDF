@@ -24,7 +24,7 @@ jobs:
       run: |
         if [ ! -f ./gradlew ]; then
           echo "Gradle wrapper missing. Generating a fresh one..."
-          gradle wrapper --gradle-version 8.2
+          gradle wrapper --gradle-version 8.6
         fi
         chmod +x ./gradlew
 
