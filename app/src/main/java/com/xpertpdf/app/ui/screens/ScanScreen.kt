@@ -3,25 +3,20 @@ package com.xpertpdf.app.ui.screens
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Camera
-import androidx.compose.material.icons.filled.DocumentScanner
-import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,12 +36,12 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
+import com.xpertpdf.app.managers.CrashManager
 import com.xpertpdf.app.utils.Localization
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -64,6 +59,7 @@ fun ScanScreen(
     var capturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var resultFile: File? by remember { mutableStateOf(null) }
     var isProcessing by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     // Camera capture variables
     var imageCapture: ImageCapture? by remember { mutableStateOf(null) }
@@ -82,7 +78,7 @@ fun ScanScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(Localization.translate(language, "scan"), fontWeight = FontWeight.SemiBold) },
+                title = { Text(Localization.translate(language, "scan"), fontWeight = FontWeight.ExtraBold) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
@@ -98,16 +94,23 @@ fun ScanScreen(
             contentAlignment = Alignment.Center
         ) {
             if (!hasCameraPermission) {
+                // Permission required layout
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                     modifier = Modifier.padding(24.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.DocumentScanner, contentDescription = "Scan", tint = Color.Gray, modifier = Modifier.size(64.dp))
+                    Icon(
+                        imageVector = Icons.Default.DocumentScanner,
+                        contentDescription = "Scan",
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                        modifier = Modifier.size(92.dp)
+                    )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text("Camera Access Required", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text("Please approve camera permissions to scan paper documents.", fontSize = 14.sp, color = Color.Gray)
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
                     Button(onClick = { permissionLauncher.launch(android.Manifest.permission.CAMERA) }) {
                         Text("Grant Camera Access")
                     }
@@ -116,23 +119,32 @@ fun ScanScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("Compiling scanned document profile...", style = MaterialTheme.typography.bodyMedium)
+                    Text("Processing scanned image...", fontWeight = FontWeight.Bold)
                 }
             } else if (resultFile != null) {
+                // Success State
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                     modifier = Modifier.padding(24.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.DocumentScanner, contentDescription = "Success", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(64.dp))
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "Success",
+                        tint = Color(0xFF34A853),
+                        modifier = Modifier.size(72.dp)
+                    )
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("Document Scanned & Saved!", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("Saved to app cache:\n${resultFile?.name}", fontSize = 14.sp, color = Color.Gray, modifier = Modifier.padding(top = 8.dp))
+                    Text("Document Scanned & Saved!", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF34A853))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(text = resultFile!!.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(text = "Location: Cache Directory", fontSize = 12.sp, color = Color.Gray)
                     Spacer(modifier = Modifier.height(24.dp))
                     Button(
                         onClick = {
                             capturedBitmap = null
                             resultFile = null
+                            errorMessage = null
                         },
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -140,7 +152,7 @@ fun ScanScreen(
                     }
                 }
             } else if (capturedBitmap != null) {
-                // Post Capture preview page before compiling to PDF
+                // Post capture layout
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -148,14 +160,29 @@ fun ScanScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Text("Scan Document Capture Preview", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("Scan Document Capture Preview", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Spacer(modifier = Modifier.height(16.dp))
                     
+                    if (errorMessage != null) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                        ) {
+                            Text(
+                                text = errorMessage!!,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    }
+
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, Color.LightGray, RoundedCornerShape(12.dp))
                     ) {
                         Image(
                             bitmap = capturedBitmap!!.asImageBitmap(),
@@ -164,15 +191,14 @@ fun ScanScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Button(
-                            onClick = { capturedBitmap = null },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.outline),
+                        OutlinedButton(
+                            onClick = { capturedBitmap = null; errorMessage = null },
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp)
                         ) {
@@ -182,6 +208,7 @@ fun ScanScreen(
                         Button(
                             onClick = {
                                 isProcessing = true
+                                errorMessage = null
                                 scope.launch(Dispatchers.IO) {
                                     try {
                                         val document = PDDocument()
@@ -191,7 +218,6 @@ fun ScanScreen(
                                         val imageXObject = JPEGFactory.createFromImage(document, capturedBitmap)
                                         val contentStream = PDPageContentStream(document, page)
                                         
-                                        // Scale image to fit within standard PDF page dimensions
                                         val pageWidth = page.mediaBox.width
                                         val pageHeight = page.mediaBox.height
                                         contentStream.drawImage(imageXObject, 0f, 0f, pageWidth, pageHeight)
@@ -205,23 +231,27 @@ fun ScanScreen(
                                             resultFile = outFile
                                             isProcessing = false
                                         }
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
+                                    } catch (t: Throwable) {
+                                        t.printStackTrace()
+                                        CrashManager.logCrash(context, "Scan Convert", t)
                                         withContext(Dispatchers.Main) {
                                             isProcessing = false
+                                            errorMessage = "Failed to convert image to PDF document. ${t.localizedMessage ?: "Out of memory."}"
                                         }
                                     }
                                 }
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1.2f),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("Convert to PDF")
+                            Icon(imageVector = Icons.Default.PictureAsPdf, contentDescription = "PDF")
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Save as PDF")
                         }
                     }
                 }
             } else {
-                // Main Camera Capture Interface
+                // Camera capture preview view
                 Box(modifier = Modifier.fillMaxSize()) {
                     AndroidView(
                         factory = { ctx ->
@@ -252,7 +282,7 @@ fun ScanScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // Overlay snap layout triggers
+                    // Floating snap button
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -270,7 +300,7 @@ fun ScanScreen(
                                     cameraExecutor,
                                     object : ImageCapture.OnImageSavedCallback {
                                         override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                            val bmp = BitmapFactory.decodeFile(photoFile.absolutePath)
+                                            val bmp = decodeSampledBitmapFromFile(photoFile.absolutePath, 1200, 1600)
                                             photoFile.delete()
                                             scope.launch {
                                                 capturedBitmap = bmp
@@ -280,6 +310,7 @@ fun ScanScreen(
 
                                         override fun onError(exception: ImageCaptureException) {
                                             exception.printStackTrace()
+                                            CrashManager.logCrash(context, "Scan Capture", exception)
                                             scope.launch { isProcessing = false }
                                         }
                                     }
@@ -292,11 +323,39 @@ fun ScanScreen(
                                 .padding(4.dp)
                                 .border(4.dp, MaterialTheme.colorScheme.primary, CircleShape)
                         ) {
-                            Icon(imageVector = Icons.Default.Camera, contentDescription = "Shutter Click", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
+                            Icon(
+                                imageVector = Icons.Default.Camera,
+                                contentDescription = "Shutter Click",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(36.dp)
+                            )
                         }
                     }
                 }
             }
         }
     }
+}
+
+private fun decodeSampledBitmapFromFile(path: String, reqWidth: Int, reqHeight: Int): Bitmap {
+    val options = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    BitmapFactory.decodeFile(path, options)
+    options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
+    options.inJustDecodeBounds = false
+    return BitmapFactory.decodeFile(path, options)
+}
+
+private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+    val (height: Int, width: Int) = options.outHeight to options.outWidth
+    var inSampleSize = 1
+    if (height > reqHeight || width > reqWidth) {
+        val halfHeight: Int = height / 2
+        val halfWidth: Int = width / 2
+        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+            inSampleSize *= 2
+        }
+    }
+    return inSampleSize
 }
