@@ -1,10 +1,7 @@
 package com.xpertpdf.app.ui.screens
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -12,9 +9,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.DownloadDone
-import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,11 +23,14 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
+import com.xpertpdf.app.managers.CacheManager
+import com.xpertpdf.app.managers.CrashManager
+import com.xpertpdf.app.managers.PdfManager
+import com.xpertpdf.app.ui.components.FileBrowser
 import com.xpertpdf.app.utils.Localization
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.InputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,56 +40,16 @@ fun ExtractImagesScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var pdfUri by remember { mutableStateOf<Uri?>(null) }
+    var pdfSource by remember { mutableStateOf<String?>(null) }
     var extractedBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
     var isProcessing by remember { mutableStateOf(false) }
-
-    val pickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            pdfUri = uri
-            extractedBitmaps = emptyList()
-            isProcessing = true
-            scope.launch(Dispatchers.IO) {
-                try {
-                    val stream: InputStream? = context.contentResolver.openInputStream(uri)
-                    stream?.use { input ->
-                        val document = PDDocument.load(input)
-                        val imageList = mutableListOf<Bitmap>()
-                        
-                        // Parse PDF document structure to seek embedded visual resources
-                        for (page in document.pages) {
-                            val resources = page.resources
-                            for (name in resources.xObjectNames) {
-                                val xobject = resources.getXObject(name)
-                                if (xobject is PDImageXObject) {
-                                    val bmp = xobject.image
-                                    imageList.add(bmp)
-                                }
-                            }
-                        }
-                        
-                        document.close()
-                        withContext(Dispatchers.Main) {
-                            extractedBitmaps = imageList
-                            isProcessing = false
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    withContext(Dispatchers.Main) {
-                        isProcessing = false
-                    }
-                }
-            }
-        }
-    }
+    var isBrowserOpen by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(Localization.translate(language, "extractImages"), fontWeight = FontWeight.SemiBold) },
+                title = { Text(Localization.translate(language, "extractImages"), fontWeight = FontWeight.ExtraBold) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
@@ -106,27 +64,68 @@ fun ExtractImagesScreen(
                 .padding(paddingValues),
             contentAlignment = Alignment.Center
         ) {
-            if (pdfUri == null) {
-                // Selector
-                Button(
-                    onClick = { pickerLauncher.launch("application/pdf") },
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp)
+            if (pdfSource == null) {
+                // Empty state to browse
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(24.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.UploadFile, contentDescription = "Upload")
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(Localization.translate(language, "select_pdf"), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Icon(
+                        imageVector = Icons.Default.ImageSearch,
+                        contentDescription = "Extract Images",
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                        modifier = Modifier.size(92.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Extract embedded images from any PDF document",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { isBrowserOpen = true },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Search, contentDescription = "Browse")
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Select PDF File")
+                    }
                 }
             } else if (isProcessing) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("Extracting embedded images...", style = MaterialTheme.typography.bodyMedium)
+                    Text("Searching document for images safely...", fontWeight = FontWeight.Bold)
                 }
             } else {
-                // Done View
+                // Extracted images grid or empty warning
                 if (extractedBitmaps.isEmpty()) {
-                    Text("No embedded images detected inside PDF.", fontWeight = FontWeight.Medium, color = Color.Gray)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BrokenImage,
+                            contentDescription = "No images",
+                            tint = Color.Gray,
+                            modifier = Modifier.size(64.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "No embedded vector or raster images detected inside PDF.",
+                            fontWeight = FontWeight.Medium,
+                            color = Color.Gray,
+                            fontSize = 14.sp
+                        )
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Button(onClick = { pdfSource = null }) {
+                            Text("Select Another File")
+                        }
+                    }
                 } else {
                     Column(
                         modifier = Modifier
@@ -140,9 +139,14 @@ fun ExtractImagesScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Extracted (${extractedBitmaps.size} assets)", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                            IconButton(onClick = { pdfUri = null }) {
-                                Icon(imageVector = Icons.Default.UploadFile, contentDescription = "New PDF")
+                            Text("Extracted (${extractedBitmaps.size} items)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Button(
+                                onClick = { pdfSource = null },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "New PDF", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("New PDF", fontSize = 12.sp)
                             }
                         }
 
@@ -155,7 +159,7 @@ fun ExtractImagesScreen(
                             items(extractedBitmaps) { bitmap ->
                                 Card(
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    shape = RoundedCornerShape(8.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .aspectRatio(1f)
@@ -174,5 +178,68 @@ fun ExtractImagesScreen(
                 }
             }
         }
+    }
+
+    if (isBrowserOpen) {
+        FileBrowser(
+            title = "Select PDF Document",
+            allowedTypes = listOf("pdf"),
+            onFilesSelected = { selection ->
+                isBrowserOpen = false
+                if (selection.isNotEmpty()) {
+                    pdfSource = selection[0].path
+                    extractedBitmaps = emptyList()
+                    isProcessing = true
+                    errorMessage = null
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val validation = PdfManager.validatePdf(context, selection[0].path)
+                            if (!validation.first) {
+                                throw IllegalArgumentException(validation.second)
+                            }
+
+                            val document = PdfManager.openDocument(context, selection[0].path)
+                            val imageList = mutableListOf<Bitmap>()
+                            var totalExtracted = 0
+                            
+                            for (page in document.pages) {
+                                if (totalExtracted >= 24) break
+                                val resources = page.resources
+                                for (name in resources.xObjectNames) {
+                                    if (totalExtracted >= 24) break
+                                    val xobject = resources.getXObject(name)
+                                    if (xobject is PDImageXObject) {
+                                        val bmp = xobject.image
+                                        if (bmp != null) {
+                                            val (w, h) = PdfManager.calculateSafeDimensions(bmp.width, bmp.height, 800)
+                                            val scaledBmp = Bitmap.createScaledBitmap(bmp, w, h, true)
+                                            if (scaledBmp != bmp) {
+                                                bmp.recycle()
+                                            }
+                                            imageList.add(scaledBmp)
+                                            totalExtracted++
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            document.close()
+                            withContext(Dispatchers.Main) {
+                                extractedBitmaps = imageList
+                                isProcessing = false
+                            }
+                        } catch (t: Throwable) {
+                            t.printStackTrace()
+                            CrashManager.logCrash(context, "ExtractImages", t)
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                errorMessage = "Failed to parse document. ${t.localizedMessage ?: "File might be corrupted."}"
+                            }
+                        }
+                    }
+                }
+            },
+            onDismiss = { isBrowserOpen = false }
+        )
     }
 }
