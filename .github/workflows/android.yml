@@ -1,0 +1,44 @@
+name: XpertPDF Automated APK Generator
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: 
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Java Development Kit (JDK 17)
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    # Dynamically injects a fresh Gradle wrapper so the build cannot fail from a missing gradlew file
+    - name: Validate or Generate Gradle Wrapper
+      run: |
+        if [ ! -f ./gradlew ]; then
+          echo "Gradle wrapper missing. Generating a fresh one..."
+          gradle wrapper --gradle-version 8.6
+        fi
+        chmod +x ./gradlew
+
+    - name: Set up Gradle Cache
+      uses: gradle/actions/setup-gradle@v3
+
+    # Compiles the app straight from the repository root
+    - name: Build Release APK
+      run: ./gradlew assembleRelease
+      env:
+        GITHUB_RUN_NUMBER: ${{ github.run_number }}
+
+    - name: Upload Finished APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: XpertPDF-Build-${{ github.run_number }}
+        path: app/build/outputs/apk/release/*-unsigned.apk
