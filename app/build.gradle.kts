@@ -101,3 +101,32 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
+tasks.register("copyLauncherIcons") {
+    doLast {
+        println("Locating source ic_launcher...")
+        var srcFile: File? = null
+        rootDir.walkTopDown().forEach { file ->
+            if (file.extension == "jpg" && file.isFile && (file.name.contains("ic_launcher") || file.name.contains("1782395"))) {
+                srcFile = file
+            }
+        }
+        
+        val original = srcFile
+        if (original != null && original.exists()) {
+            println("Using source file: ${original.absolutePath} (${original.length()} bytes)")
+            val densities = listOf("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi")
+            for (density in densities) {
+                val destDir = file("src/main/res/mipmap-$density")
+                destDir.mkdirs()
+                val destFile = File(destDir, "ic_launcher.jpg")
+                if (destFile.absolutePath != original.absolutePath) {
+                    original.copyTo(destFile, overwrite = true)
+                    println("Successfully copied to ${destFile.absolutePath}")
+                }
+            }
+        } else {
+            throw GradleException("Could not find any source ic_launcher.jpg recursively in ${rootDir.absolutePath}")
+        }
+    }
+}

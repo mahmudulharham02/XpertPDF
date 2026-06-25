@@ -1,10 +1,15 @@
 package com.xpertpdf.app.ui.components
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import androidx.core.app.ActivityCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -66,7 +71,37 @@ fun FileBrowser(
     // File listing
     var filesList by remember { mutableStateOf<List<StorageFile>>(emptyList()) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var hasStoragePermission by remember { mutableStateOf(StorageManager.hasPermissions(context)) }
+    var hasStoragePermission by remember { mutableStateOf(StorageManager.hasStoragePermissions(context)) }
+    var showRationale by remember { mutableStateOf(false) }
+
+    val storagePermissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissionsMap ->
+        hasStoragePermission = StorageManager.hasStoragePermissions(context)
+    }
+
+    fun checkShouldShowRationale(): Boolean {
+        val act = context as? Activity ?: return false
+        for (permission in StorageManager.getStoragePermissions()) {
+            if (ActivityCompat.shouldShowRequestPermissionRationale(act, permission)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasStoragePermission = StorageManager.hasStoragePermissions(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     // SAF directory launcher
     val safLauncher = rememberLauncherForActivityResult(
@@ -299,6 +334,29 @@ fun FileBrowser(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                if (showRationale) {
+                    AlertDialog(
+                        onDismissRequest = { showRationale = false },
+                        title = { Text("Storage Permission Required", fontWeight = FontWeight.Bold) },
+                        text = { Text("This application requires storage permissions to browse and select PDF documents, images, and other files. Without it, you won't be able to utilize PDF tools on your local files.") },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    showRationale = false
+                                    storagePermissionsLauncher.launch(StorageManager.getStoragePermissions().toTypedArray())
+                                }
+                            ) {
+                                Text("Allow")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showRationale = false }) {
+                                Text("Cancel")
+                            }
+                        }
+                    )
+                }
+
                 // Error Message / Permissions
                 if (!hasStoragePermission) {
                     Column(
@@ -321,13 +379,27 @@ fun FileBrowser(
                             fontSize = 16.sp
                         )
                         Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = {
-                                StorageManager.openAppSettings(context)
-                                hasStoragePermission = StorageManager.hasPermissions(context)
-                            }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Text("Grant Permission in Settings")
+                            Button(
+                                onClick = {
+                                    if (checkShouldShowRationale()) {
+                                        showRationale = true
+                                    } else {
+                                        storagePermissionsLauncher.launch(StorageManager.getStoragePermissions().toTypedArray())
+                                    }
+                                }
+                            ) {
+                                Text("Grant Permission")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    StorageManager.openAppSettings(context)
+                                }
+                            ) {
+                                Text("Open Settings")
+                            }
                         }
                     }
                 } else if (errorMessage != null) {

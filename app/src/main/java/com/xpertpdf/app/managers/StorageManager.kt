@@ -37,30 +37,50 @@ data class StorageFile(
 
 object StorageManager {
     
-    // Get required permissions list based on Android API level
-    fun getRequiredPermissions(): List<String> {
+    // Get required storage permissions list based on Android API level
+    fun getStoragePermissions(): List<String> {
         val permissions = mutableListOf<String>()
-        permissions.add(Manifest.permission.CAMERA)
-        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.READ_MEDIA_IMAGES)
+            permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
+            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         } else {
             permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
-                permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
+            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
         return permissions
     }
 
-    // Check if permissions are fully granted
-    fun hasPermissions(context: Context): Boolean {
-        for (permission in getRequiredPermissions()) {
-            if (ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED) {
-                return false
+    // Check if storage permissions are fully granted
+    fun hasStoragePermissions(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED ||
+                   ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        } else {
+            for (permission in getStoragePermissions()) {
+                if (ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED) {
+                    return false
+                }
             }
+            return true
         }
-        return true
+    }
+
+    // Get required permissions list based on Android API level (legacy/camera inclusive)
+    fun getRequiredPermissions(): List<String> {
+        val permissions = mutableListOf<String>()
+        permissions.add(Manifest.permission.CAMERA)
+        permissions.addAll(getStoragePermissions())
+        return permissions
+    }
+
+    // Check if permissions are fully granted (legacy/camera inclusive)
+    fun hasPermissions(context: Context): Boolean {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
+               hasStoragePermissions(context)
     }
 
     // Request permissions through standard Activity request code
